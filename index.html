@@ -256,20 +256,6 @@
 
     .map-popup form { display: grid; gap: 8px; }
     .map-popup label { display: grid; gap: 4px; color: #d8e8ff; font-size: .85rem; }
-    .cover-mode-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-      align-items: end;
-    }
-    .cover-mode-row select {
-      border: 1px solid rgba(147, 175, 255, .45);
-      background: rgba(240, 245, 255, .98);
-      color: #1f2a44;
-      border-radius: 10px;
-      padding: 9px 10px;
-      font: inherit;
-    }
     .map-popup input {
       border: 1px solid rgba(147, 175, 255, .45);
       background: rgba(240, 245, 255, .98);
@@ -757,19 +743,11 @@
             <label>Nombre del universo
               <input type="text" name="nombreUniverso" maxlength="80" required placeholder="Ej. One Piece">
             </label>
-            <div class="cover-mode-row">
-              <label>Tipo de portada
-                <select name="coverMode" id="coverMode">
-                  <option value="url">URL</option>
-                  <option value="file">+</option>
-                </select>
-              </label>
-            </div>
-            <label id="urlField">URL de portada
-              <input type="url" name="portadaUrl" placeholder="https://...">
-            </label>
-            <label id="fileField" hidden>Imagen desde escritorio
+            <label>Subir imagen desde PC
               <input type="file" name="portadaArchivo" accept="image/*">
+            </label>
+            <label>O ingresar URL de portada
+              <input type="url" name="portadaUrl" placeholder="https://...">
             </label>
             <button type="submit">Crear Universo</button>
             <p class="popup-feedback" id="popupFeedback" aria-live="polite"></p>
@@ -781,23 +759,6 @@
 
         const form = popup.querySelector('#mapCreateForm');
         const feedback = popup.querySelector('#popupFeedback');
-        const coverMode = popup.querySelector('#coverMode');
-        const urlField = popup.querySelector('#urlField');
-        const fileField = popup.querySelector('#fileField');
-        const urlInputEl = popup.querySelector('input[name="portadaUrl"]');
-        const fileInputEl = popup.querySelector('input[name="portadaArchivo"]');
-        const updateCoverMode = () => {
-          const mode = coverMode?.value || 'url';
-          if (urlField && fileField) {
-            urlField.hidden = mode !== 'url';
-            fileField.hidden = mode !== 'file';
-          }
-          if (urlInputEl) urlInputEl.value = mode === 'url' ? urlInputEl.value : '';
-          if (fileInputEl && mode === 'url') fileInputEl.value = '';
-        };
-        coverMode?.addEventListener('change', updateCoverMode);
-        updateCoverMode();
-
         form?.addEventListener('submit', async (event) => {
           event.preventDefault();
           if (!feedback) return;
@@ -818,15 +779,11 @@
             return;
           }
 
-          const mode = String(formData.get('coverMode') || 'url');
           const file = formData.get('portadaArchivo');
           const urlInput = String(formData.get('portadaUrl') || '');
           let cover = createPlaceholderCover(name);
           try {
-            if (mode === 'file') {
-              if (!(file instanceof File) || file.size === 0) {
-                throw new Error('Selecciona una imagen de escritorio para continuar.');
-              }
+            if (file instanceof File && file.size > 0) {
               if (!file.type.startsWith('image/')) throw new Error('El archivo seleccionado no es una imagen.');
               if (file.size > MAX_LOCAL_IMAGE_BYTES) throw new Error('La imagen supera el límite de 2MB.');
               cover = await fileToDataUrl(file);
