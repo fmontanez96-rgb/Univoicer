@@ -586,6 +586,60 @@
     .detail-close {
       justify-self: end;
     }
+    .mock-shell {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 14px;
+    }
+    .mock-row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .mock-box {
+      background: var(--panel-2);
+      border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--line));
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .terminal-list {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #0d1228;
+      color: #8fffc4;
+      border-radius: 14px;
+      border: 1px solid #233159;
+      padding: 14px;
+      list-style: none;
+      margin: 0;
+      display: grid;
+      gap: 6px;
+    }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 12px;
+      box-shadow: var(--shadow-soft);
+    }
+    .theme-toggle {
+      width: 52px;
+      height: 28px;
+      border-radius: 999px;
+      background: #dadff1;
+      position: relative;
+      border: 1px solid var(--line);
+    }
+    .theme-toggle::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,.18);
+    }
 
     @media (max-width: 960px) {
       .layout { grid-template-columns: 1fr; }
@@ -635,6 +689,15 @@
         <section id="viewMap" class="view active"></section>
         <section id="viewUniverse" class="view"></section>
         <section id="viewAchievements" class="view"></section>
+        <section id="viewIndice" class="view"></section>
+        <section id="viewMaraton" class="view"></section>
+        <section id="viewRarezas" class="view"></section>
+        <section id="viewActores" class="view"></section>
+        <section id="viewVersiones" class="view"></section>
+        <section id="viewFavoritos" class="view"></section>
+        <section id="viewBuscar" class="view"></section>
+        <section id="viewStats" class="view"></section>
+        <section id="viewConfig" class="view"></section>
       </section>
     </div>
   </main>
@@ -659,11 +722,30 @@
 
     const appLayout = document.getElementById('appLayout');
     const toggleSidebar = document.getElementById('toggleSidebar');
+    const navInicio = document.getElementById('navInicio');
     const navUniverses = document.getElementById('navUniverses');
+    const navIndice = document.getElementById('navIndice');
+    const navMaraton = document.getElementById('navMaraton');
+    const navRarezas = document.getElementById('navRarezas');
+    const navActores = document.getElementById('navActores');
+    const navVersiones = document.getElementById('navVersiones');
     const navAchievements = document.getElementById('navAchievements');
+    const navFavoritos = document.getElementById('navFavoritos');
+    const navBuscar = document.getElementById('navBuscar');
+    const navStats = document.getElementById('navStats');
+    const navConfig = document.getElementById('navConfig');
     const viewMap = document.getElementById('viewMap');
     const viewUniverse = document.getElementById('viewUniverse');
     const viewAchievements = document.getElementById('viewAchievements');
+    const viewIndice = document.getElementById('viewIndice');
+    const viewMaraton = document.getElementById('viewMaraton');
+    const viewRarezas = document.getElementById('viewRarezas');
+    const viewActores = document.getElementById('viewActores');
+    const viewVersiones = document.getElementById('viewVersiones');
+    const viewFavoritos = document.getElementById('viewFavoritos');
+    const viewBuscar = document.getElementById('viewBuscar');
+    const viewStats = document.getElementById('viewStats');
+    const viewConfig = document.getElementById('viewConfig');
 
     function rarityClass(rareza) {
       return `rare-${rareza.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')}`;
@@ -1363,6 +1445,134 @@
       `;
     }
 
+    function renderIndiceView() {
+      const indexItems = getCharactersIndex(VIDEOS).slice(0, 8);
+      viewIndice.innerHTML = `
+        <section class="mock-shell">
+          <h2>Índice de Personajes</h2>
+          <input type="search" placeholder="Filtrar personaje en terminal..." aria-label="Buscar personaje en índice">
+          <ul class="terminal-list">
+            ${indexItems.map(item => `<li>> ${item.personaje} · ${item.versions.length} versión(es)</li>`).join('') || '<li>> Sin personajes cargados</li>'}
+          </ul>
+        </section>
+      `;
+    }
+
+    function renderMaratonView() {
+      viewMaraton.innerHTML = `
+        <section class="mock-shell">
+          <h2>Modo Maratón</h2>
+          <div class="mock-row">
+            <select aria-label="Selector de maratón mock">
+              <option>Universo actual (mock)</option>
+              <option>Rareza alta (mock)</option>
+            </select>
+            <button class="primary-btn">Iniciar transmisión</button>
+          </div>
+          <div class="mock-box">
+            <strong>Placeholder de video</strong>
+            <p class="muted">Aquí se mostrará el stream continuo de saludos.</p>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderRarezasView() {
+      const levels = [
+        ['Común', 'Estabilidad base'],
+        ['Raro', 'Carga amplificada'],
+        ['Épico', 'Pulso de energía avanzada'],
+        ['Legendario', 'Núcleo máximo']
+      ];
+      viewRarezas.innerHTML = `
+        <section class="mock-shell">
+          <h2>Rarezas por nivel de energía</h2>
+          <div class="mock-row">
+            ${levels.map(([name, desc]) => `<article class="mock-box"><h3>${name}</h3><p class="muted">${desc}</p></article>`).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderActoresView() {
+      const actors = [...new Set(VIDEOS.map(v => v.actor_de_doblaje).filter(Boolean))].slice(0, 6);
+      viewActores.innerHTML = `
+        <section class="mock-shell">
+          <h2>Actores de doblaje</h2>
+          <p class="muted">Contador mock de personajes: 128</p>
+          <div class="mock-row">
+            ${actors.map(actor => `<article class="mock-box"><h3>${actor}</h3><p class="muted">Tarjeta de actor</p></article>`).join('') || '<p class="muted">Sin actores registrados.</p>'}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderVersionesView() {
+      const multiverse = [...new Set(VIDEOS.map(v => v.personaje).filter(Boolean))].slice(0, 8);
+      viewVersiones.innerHTML = `
+        <section class="mock-shell">
+          <h2>Versiones multiverso</h2>
+          <ul>
+            ${multiverse.map(name => `<li>${name} · Variante Alpha/Beta (mock)</li>`).join('') || '<li>Sin variantes disponibles.</li>'}
+          </ul>
+          <button>Explorar variantes</button>
+        </section>
+      `;
+    }
+
+    function renderFavoritosView() {
+      const favorites = VIDEOS.slice(0, 3);
+      viewFavoritos.innerHTML = `
+        <section class="mock-shell">
+          <h2>Favoritos</h2>
+          ${favorites.length
+            ? `<ul>${favorites.map(item => `<li>${item.personaje || 'Sin personaje'} · ${item.titulo || 'Sin título'}</li>`).join('')}</ul>`
+            : '<p class="muted">No hay elementos prioritarios aún</p>'}
+        </section>
+      `;
+    }
+
+    function renderBuscarView() {
+      viewBuscar.innerHTML = `
+        <section class="mock-shell" style="min-height: 58vh; place-content: center;">
+          <input type="search" style="font-size:1.15rem; padding:16px;" placeholder="placeholder exacto solicitado" aria-label="Búsqueda global">
+        </section>
+      `;
+    }
+
+    function renderStatsView() {
+      viewStats.innerHTML = `
+        <section class="mock-shell">
+          <h2>Estadísticas</h2>
+          <div class="mock-row">
+            <article class="kpi"><strong>KPI 1</strong><p class="muted">Conversión mock: 24%</p></article>
+            <article class="kpi"><strong>KPI 2</strong><p class="muted">Retención mock: 72%</p></article>
+            <article class="kpi"><strong>KPI 3</strong><p class="muted">Rareza alta mock: 19%</p></article>
+          </div>
+          <div class="mock-row">
+            <div class="mock-box">Placeholder gráfico de líneas</div>
+            <div class="mock-box">Placeholder gráfico de barras</div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderConfigView() {
+      viewConfig.innerHTML = `
+        <section class="mock-shell">
+          <h2>Configuración</h2>
+          <div class="mock-row">
+            <button>Importar JSON</button>
+            <button>Exportar JSON</button>
+            <div class="mock-box">
+              <p>Tema</p>
+              <div class="theme-toggle" aria-hidden="true"></div>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
     function cssSafe(text) {
       return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-');
     }
@@ -1425,16 +1635,44 @@
       viewMap.classList.toggle('active', next === 'map');
       viewUniverse.classList.toggle('active', next === 'universe');
       viewAchievements.classList.toggle('active', next === 'achievements');
+      viewIndice.classList.toggle('active', next === 'indice');
+      viewMaraton.classList.toggle('active', next === 'maraton');
+      viewRarezas.classList.toggle('active', next === 'rarezas');
+      viewActores.classList.toggle('active', next === 'actores');
+      viewVersiones.classList.toggle('active', next === 'versiones');
+      viewFavoritos.classList.toggle('active', next === 'favoritos');
+      viewBuscar.classList.toggle('active', next === 'buscar');
+      viewStats.classList.toggle('active', next === 'stats');
+      viewConfig.classList.toggle('active', next === 'config');
       document.querySelectorAll('.sidebar-nav .sidebar-item').forEach(btn => btn.classList.remove('active'));
-      if (next === 'achievements') {
-        navAchievements.classList.add('active');
-      } else {
-        navUniverses.classList.add('active');
-      }
+      const navByView = {
+        map: navUniverses,
+        universe: navUniverses,
+        achievements: navAchievements,
+        indice: navIndice,
+        maraton: navMaraton,
+        rarezas: navRarezas,
+        actores: navActores,
+        versiones: navVersiones,
+        favoritos: navFavoritos,
+        buscar: navBuscar,
+        stats: navStats,
+        config: navConfig
+      };
+      navByView[next]?.classList.add('active');
 
       if (next === 'map') renderMapView();
       if (next === 'universe') renderUniverseView();
       if (next === 'achievements') renderAchievementsView();
+      if (next === 'indice') renderIndiceView();
+      if (next === 'maraton') renderMaratonView();
+      if (next === 'rarezas') renderRarezasView();
+      if (next === 'actores') renderActoresView();
+      if (next === 'versiones') renderVersionesView();
+      if (next === 'favoritos') renderFavoritosView();
+      if (next === 'buscar') renderBuscarView();
+      if (next === 'stats') renderStatsView();
+      if (next === 'config') renderConfigView();
     }
 
     toggleSidebar.onclick = () => {
@@ -1442,17 +1680,18 @@
       toggleSidebar.textContent = appLayout.classList.contains('sidebar-collapsed') ? '➡️ Expandir menú' : '↔️ Colapsar menú';
     };
 
-    const upcomingNavs = ['navInicio', 'navIndice', 'navMaraton', 'navRarezas', 'navActores', 'navVersiones', 'navFavoritos', 'navBuscar', 'navStats', 'navConfig'];
-    upcomingNavs.forEach(id => {
-      const btn = document.getElementById(id);
-      if (!btn) return;
-      btn.onclick = () => {
-        alert('Esta sección está preparada en el menú y la activaremos en la siguiente etapa.');
-      };
-    });
-
+    navInicio.onclick = () => changeView('map');
     navUniverses.onclick = () => changeView(state.universe ? 'universe' : 'map');
+    navIndice.onclick = () => changeView('indice');
+    navMaraton.onclick = () => changeView('maraton');
+    navRarezas.onclick = () => changeView('rarezas');
+    navActores.onclick = () => changeView('actores');
+    navVersiones.onclick = () => changeView('versiones');
     navAchievements.onclick = () => changeView('achievements');
+    navFavoritos.onclick = () => changeView('favoritos');
+    navBuscar.onclick = () => changeView('buscar');
+    navStats.onclick = () => changeView('stats');
+    navConfig.onclick = () => changeView('config');
 
     state.universeNodes = loadUniverseNodesFromStorage();
     changeView('map');
