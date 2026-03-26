@@ -677,6 +677,7 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       align-items: end;
     }
+    #form-agregar-video { display: none; }
     .add-video-form label { display: grid; gap: 6px; color: var(--muted); font-size: .92rem; }
     .add-video-form input, .add-video-form select { width: 100%; }
     .add-video-form label:first-child,
@@ -1543,16 +1544,16 @@
             <button id="editUniverse" class="neon-btn">Editar universo</button>
             <button id="deleteUniverse" class="neon-btn">Eliminar universo</button>
             <button
-              id="toggleAddVideo"
+              id="btn-toggle-video"
               class="neon-btn neon-btn--primary"
               aria-expanded="${state.showAddForm ? 'true' : 'false'}"
             >
-              ${state.showAddForm ? 'CERRAR FORMULARIO' : 'AGREGAR VIDEO'}
+              ${state.showAddForm ? 'CERRAR' : 'AGREGAR VIDEO'}
             </button>
           </div>
         </section>
 
-        <form id="addVideoForm" class="add-video-form" ${state.showAddForm ? '' : 'hidden'}>
+        <form id="form-agregar-video" class="add-video-form">
           <label>URL de YouTube
             <input type="url" name="url_youtube" required placeholder="https://www.youtube.com/watch?v=...">
           </label>
@@ -1612,10 +1613,20 @@
       `;
 
       document.getElementById('backMap').onclick = () => changeView('map');
-      document.getElementById('toggleAddVideo').onclick = () => {
-        state.showAddForm = !state.showAddForm;
-        renderUniverseView();
+      const btnToggleVideo = document.getElementById('btn-toggle-video');
+      const formAgregarVideo = document.getElementById('form-agregar-video');
+      const syncVideoFormUi = () => {
+        if (!btnToggleVideo || !formAgregarVideo) return;
+        formAgregarVideo.style.display = state.showAddForm ? 'grid' : 'none';
+        btnToggleVideo.textContent = state.showAddForm ? 'CERRAR' : 'AGREGAR VIDEO';
+        btnToggleVideo.setAttribute('aria-expanded', state.showAddForm ? 'true' : 'false');
       };
+      syncVideoFormUi();
+      btnToggleVideo?.addEventListener('click', () => {
+        state.showAddForm = !state.showAddForm;
+        syncVideoFormUi();
+        if (state.showAddForm) formAgregarVideo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
       document.getElementById('editUniverse').onclick = () => {
         const newName = prompt('Nuevo nombre del universo:', state.universe || '');
         if (!newName?.trim()) return;
@@ -1663,7 +1674,7 @@
         changeView('map');
       };
 
-      const addVideoForm = document.getElementById('addVideoForm');
+      const addVideoForm = document.getElementById('form-agregar-video');
       addVideoForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
         const feedback = document.getElementById('videoFormFeedback');
