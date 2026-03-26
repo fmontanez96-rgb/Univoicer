@@ -863,26 +863,9 @@
     import { getFirestore, collection, addDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
     // Mantener la configuración existente de Firebase.
-    function resolveFirebaseConfig() {
-      if (window.firebaseConfig && typeof window.firebaseConfig === 'object') return window.firebaseConfig;
-      if (window.__firebase_config__ && typeof window.__firebase_config__ === 'object') return window.__firebase_config__;
-      const configNode = document.getElementById('firebase-config');
-      if (configNode?.textContent?.trim()) {
-        try {
-          return JSON.parse(configNode.textContent);
-        } catch (_) {
-          console.error('El JSON de #firebase-config no es válido.');
-        }
-      }
-      return null;
-    }
-
-    const firebaseConfig = resolveFirebaseConfig();
-    const app = firebaseConfig ? initializeApp(firebaseConfig) : null;
-    const db = app ? getFirestore(app) : null;
-    if (!db) {
-      console.error('Firebase no está configurado. Define window.firebaseConfig o #firebase-config para habilitar Firestore.');
-    }
+    const firebaseConfig = window.firebaseConfig;
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
     const VIDEOS = [];
 
@@ -934,8 +917,7 @@
     }
 
     function toEmbedUrl(url, autoplay = 0) {
-      const match = url.match(/(?:v=|\.be\/)([A-Za-z0-9_-]{11})/);
-      const id = match ? match[1] : '';
+      const id = getYoutubeId(url);
       return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&autoplay=${autoplay}&enablejsapi=1`;
     }
 
@@ -986,7 +968,6 @@
 
     async function addUniverse({ nombre, portada, posicionX, posicionY }) {
       try {
-        if (!db) throw new Error('Firestore no está inicializado.');
         const universesCollection = collection(db, 'universos');
         const created = await addDoc(universesCollection, { nombre, portada, posicionX, posicionY });
         return created.id;
@@ -998,7 +979,6 @@
 
     async function getUniverses() {
       try {
-        if (!db) throw new Error('Firestore no está inicializado.');
         const snapshot = await getDocs(collection(db, 'universos'));
         return snapshot.docs.map((docItem, idx) => {
           const data = docItem.data();
@@ -1020,7 +1000,6 @@
 
     async function addVideo({ universoId, personaje, actor, url, thumbnail, rareza, titulo }) {
       try {
-        if (!db) throw new Error('Firestore no está inicializado.');
         const videosCollection = collection(db, 'videos');
         const created = await addDoc(videosCollection, {
           universoId,
@@ -1040,7 +1019,6 @@
 
     async function getVideosByUniverse(universoId) {
       try {
-        if (!db) throw new Error('Firestore no está inicializado.');
         const videosCollection = collection(db, 'videos');
         const videosQuery = query(videosCollection, where('universoId', '==', universoId));
         const snapshot = await getDocs(videosQuery);
@@ -1065,7 +1043,6 @@
 
     async function getAllVideos() {
       try {
-        if (!db) throw new Error('Firestore no está inicializado.');
         const snapshot = await getDocs(collection(db, 'videos'));
         return snapshot.docs.map((docItem) => {
           const data = docItem.data();
@@ -1127,13 +1104,35 @@
     }
 
     function getYoutubeId(url) {
-      const match = String(url || '').match(/(?:v=|\/embed\/|\.be\/)([A-Za-z0-9_-]{11})/);
-      return match?.[1] || '';
+      const normalizeId = (candidate) => {
+        const clean = String(candidate || '').trim();
+        return /^[A-Za-z0-9_-]{11}$/.test(clean) ? clean : '';
+      };
+      const raw = String(url || '').trim();
+      if (!raw) return '';
+      try {
+        const parsed = new URL(raw);
+        const host = parsed.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') {
+          return normalizeId(parsed.pathname.split('/').filter(Boolean)[0]);
+        }
+        if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+          const watchId = parsed.searchParams.get('v');
+          if (watchId) return normalizeId(watchId);
+          const pathParts = parsed.pathname.split('/').filter(Boolean);
+          if (pathParts[0] === 'shorts' && pathParts[1]) return normalizeId(pathParts[1]);
+          if (pathParts[0] === 'embed' && pathParts[1]) return normalizeId(pathParts[1]);
+        }
+      } catch (_) {
+        // Fallback para entradas no parseables como URL.
+      }
+      const match = raw.match(/(?:v=|\/shorts\/|\/embed\/|\.be\/)([A-Za-z0-9_-]{11})/);
+      return normalizeId(match?.[1]);
     }
 
     function normalizeYoutubeUrl(url) {
       const id = getYoutubeId(url);
-      return id ? `https://www.youtube.com/watch?v=${id}` : '';
+      return id ? `https://www.youtube.com/embed/${id}` : '';
     }
 
     async function fetchYoutubeMetadata(url) {
@@ -1142,7 +1141,8 @@
       if (!id) return { title: 'Video sin título', thumbnail: '' };
       const fallbackThumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
       try {
-        const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(normalized)}&format=json`;
+        const oembedUrl = `https://www.youtube.com/watch?v=${id}`;
+        const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(oembedUrl)}&format=json`;
         const response = await fetch(endpoint);
         if (!response.ok) throw new Error('No disponible');
         const data = await response.json();
