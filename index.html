@@ -2886,12 +2886,13 @@
       gap: 8px;
     }
     .character-actor-card.locked h3 {
-      --actor-name-fill-start: #d9e5f8;
-      --actor-name-fill-mid: #b4caea;
-      --actor-name-fill-end: #96afcf;
-      --actor-name-shadow-top: rgba(245, 251, 255, .24);
-      --actor-name-shadow-core: rgba(12, 22, 44, .9);
-      --actor-name-shadow-glow: rgba(152, 184, 225, .18);
+      --actor-name-fill-start: #fff6b8;
+      --actor-name-fill-mid: #ffd96a;
+      --actor-name-fill-end: #ffbe46;
+      --actor-name-shadow-top: rgba(255, 250, 212, .56);
+      --actor-name-shadow-core: rgba(11, 21, 44, .96);
+      --actor-name-shadow-glow: rgba(255, 214, 106, .42);
+      filter: saturate(1.35) brightness(1.2);
     }
     .character-actor-card .locked-note {
       color: #ff6c7b;
@@ -5918,7 +5919,7 @@
                     <article class="character-actor-card locked" aria-disabled="true">
                       <div class="locked-mic" role="img" aria-label="Actor bloqueado">🎙️</div>
                       <div class="meta">
-                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn icon-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
+                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn actor-add-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
                         <p class="locked-note">Bloqueado</p>
                       </div>
                     </article>
