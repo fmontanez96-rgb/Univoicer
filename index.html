@@ -1896,7 +1896,34 @@
       gap: 12px;
     }
     .character-hero__title {
-      font-size: clamp(1.75rem, 1.5rem + 1vw, 2.2rem);
+      font-size: clamp(2.2rem, 1.65rem + 2.1vw, 3.4rem);
+      font-family: "Marker Felt", "Comic Sans MS", "Chalkboard SE", "Trebuchet MS", cursive, sans-serif;
+      font-weight: 900;
+      line-height: 1.08;
+      letter-spacing: .02em;
+      background: linear-gradient(180deg, #fff3a8 0%, #ffe16b 32%, #ffad48 65%, #ff7a3d 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: #ffe16b;
+      text-shadow:
+        /* borde suave / stroke simulado */
+        1px 0 0 rgba(22, 9, 3, .88),
+        -1px 0 0 rgba(22, 9, 3, .88),
+        0 1px 0 rgba(22, 9, 3, .88),
+        0 -1px 0 rgba(22, 9, 3, .88),
+        1px 1px 0 rgba(22, 9, 3, .78),
+        -1px 1px 0 rgba(22, 9, 3, .78),
+        1px -1px 0 rgba(22, 9, 3, .78),
+        -1px -1px 0 rgba(22, 9, 3, .78),
+        /* capas 3D cortas */
+        0 2px 0 rgba(69, 24, 7, .72),
+        0 3px 0 rgba(58, 18, 8, .68),
+        0 4px 0 rgba(42, 12, 8, .62),
+        0 6px 10px rgba(0, 0, 0, .45),
+        /* glow */
+        0 0 12px rgba(255, 171, 90, .45),
+        0 0 22px rgba(255, 123, 70, .34);
       margin-bottom: 0;
     }
     .character-hero__badges {
@@ -1975,20 +2002,16 @@
       --badge-edge: color-mix(in srgb, #ffb2bf 54%, rgba(255, 207, 217, .5));
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      line-height: 1;
+      gap: 8px;
     }
-    .character-hero__badge .character-hero__universe-avatar {
-      inline-size: .78em;
-      block-size: .78em;
+    .character-hero__universe-avatar {
+      inline-size: 15px;
+      block-size: 15px;
       border-radius: 50%;
       object-fit: cover;
       border: 1px solid rgba(255, 237, 241, .72);
-      box-shadow: 0 0 3px rgba(255, 112, 136, .24);
+      box-shadow: 0 0 8px rgba(255, 112, 136, .42);
       flex: 0 0 auto;
-      animation: none;
-      transition: none;
     }
     .character-hero__universe-avatar--fallback {
       display: inline-flex;
@@ -2555,7 +2578,7 @@
     .character-actor-card {
       --card-border-top: rgba(176, 230, 255, .42);
       --card-border-bottom: rgba(17, 36, 72, .85);
-      border: 1px solid rgba(111, 180, 255, .32);
+      border: 1px solid rgba(118, 194, 255, .46);
       border-radius: 14px;
       overflow: hidden;
       position: relative;
@@ -2564,15 +2587,18 @@
         radial-gradient(circle at 18% 10%, rgba(114, 218, 255, .18), transparent 52%),
         linear-gradient(160deg, rgba(19, 40, 73, .9), rgba(11, 22, 45, .96) 58%, rgba(6, 12, 28, .98));
       box-shadow:
-        inset 0 1px 0 var(--card-border-top),
-        inset 0 -1px 0 var(--card-border-bottom),
-        0 0 0 1px rgba(49, 118, 196, .24),
-        0 11px 26px rgba(3, 8, 22, .5),
-        0 0 26px rgba(57, 135, 214, .22);
+        inset 0 2px 0 rgba(212, 243, 255, .4),
+        inset 0 -2px 0 rgba(6, 18, 42, .9),
+        inset 2px 0 0 rgba(175, 225, 255, .18),
+        inset -2px 0 0 rgba(11, 29, 63, .62),
+        0 0 0 1px rgba(63, 142, 225, .36),
+        0 14px 30px rgba(3, 8, 22, .58),
+        0 0 28px rgba(57, 135, 214, .24);
       text-align: left;
       padding: 0;
       width: 100%;
       min-width: 0;
+      transition: transform .32s cubic-bezier(.22, .61, .36, 1), border-color .28s ease, box-shadow .32s ease, filter .28s ease;
     }
     .character-actor-card::before,
     .character-actor-card::after {
@@ -2587,17 +2613,22 @@
         radial-gradient(1px 1px at 15% 20%, rgba(232, 245, 255, .22), transparent 70%),
         radial-gradient(1.2px 1.2px at 66% 40%, rgba(224, 239, 255, .16), transparent 75%),
         radial-gradient(1px 1px at 82% 74%, rgba(198, 232, 255, .14), transparent 72%),
-        radial-gradient(130% 90% at 100% 0, rgba(120, 222, 255, .09), transparent 58%);
+        radial-gradient(130% 90% at 100% 0, rgba(120, 222, 255, .09), transparent 58%),
+        radial-gradient(circle at 23% 16%, rgba(244, 252, 255, .32) 0 5px, rgba(244, 252, 255, .06) 8px, transparent 18px),
+        repeating-linear-gradient(124deg,
+          rgba(228, 242, 255, .08) 0 2px,
+          rgba(116, 174, 235, .06) 2px 4px,
+          rgba(6, 20, 42, 0) 4px 8px);
       mix-blend-mode: screen;
-      opacity: .68;
+      opacity: .74;
     }
     .character-actor-card::after {
       inset: -2px;
       border-radius: inherit;
       box-shadow:
-        0 0 0 1px rgba(142, 224, 255, .2),
-        0 0 18px rgba(74, 177, 255, .2);
-      opacity: .75;
+        0 0 0 1px rgba(160, 232, 255, .26),
+        0 0 22px rgba(74, 177, 255, .24);
+      opacity: .84;
     }
     .character-actor-card > * {
       position: relative;
@@ -2617,6 +2648,11 @@
       padding: 11px 12px 12px;
       display: grid;
       gap: 6px;
+      background:
+        linear-gradient(180deg, rgba(190, 233, 255, .08), rgba(9, 26, 50, .36) 28%, rgba(8, 20, 39, .52)),
+        repeating-linear-gradient(0deg, rgba(202, 237, 255, .05) 0 1px, rgba(8, 25, 51, .03) 1px 3px);
+      border-top: 1px solid rgba(173, 224, 255, .24);
+      box-shadow: inset 0 1px 0 rgba(235, 248, 255, .16);
     }
     .character-actor-card h3 {
       margin: 0;
@@ -2624,6 +2660,40 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      font-family: "Bangers", "Luckiest Guy", "Comic Sans MS", "Chalkboard SE", cursive, sans-serif;
+      letter-spacing: .02em;
+      color: #9ed9ff;
+      text-shadow:
+        0 1px 0 rgba(255, 255, 255, .28),
+        0 2px 0 rgba(7, 22, 47, .8),
+        0 5px 10px rgba(0, 0, 0, .48);
+    }
+    .character-actor-card .actor-name-btn {
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      border-radius: 8px;
+      padding: 2px 4px;
+      margin: -2px -4px;
+      color: inherit;
+      font: inherit;
+      font-weight: inherit;
+      letter-spacing: inherit;
+      text-shadow: inherit;
+      cursor: pointer;
+      transition: color .2s ease, text-shadow .2s ease, background-color .2s ease;
+    }
+    .character-actor-card .actor-name-btn:hover {
+      color: #dff9ff;
+      text-shadow: 0 0 10px rgba(108, 239, 255, .55);
+      background: rgba(62, 161, 218, .2);
+    }
+    .character-actor-card .actor-name-btn:focus-visible {
+      outline: 2px solid rgba(160, 229, 255, .84);
+      outline-offset: 1px;
     }
     .character-actor-card p {
       margin: 0;
@@ -2633,17 +2703,18 @@
     }
     .character-actor-card.unlocked {
       cursor: pointer;
-      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease, filter .25s ease;
       border-color: rgba(136, 229, 255, .46);
     }
     .character-actor-card.unlocked:hover {
       border-color: rgba(155, 239, 255, .92);
-      transform: translateY(-3px);
+      transform: translateY(-5px) scale(1.045);
       box-shadow:
-        inset 0 1px 0 rgba(206, 241, 255, .5),
-        inset 0 -1px 0 rgba(17, 37, 76, .82),
-        var(--shadow),
-        0 0 24px rgba(71, 180, 255, .3);
+        inset 0 2px 0 rgba(232, 248, 255, .55),
+        inset 0 -2px 0 rgba(11, 31, 66, .86),
+        inset 2px 0 0 rgba(184, 229, 255, .2),
+        inset -2px 0 0 rgba(12, 34, 73, .65),
+        0 18px 36px rgba(2, 10, 28, .62),
+        0 0 28px rgba(71, 180, 255, .34);
     }
     .character-actor-card.unlocked img {
       aspect-ratio: 16 / 11;
@@ -2651,9 +2722,9 @@
       filter: saturate(1.18) contrast(1.1) brightness(.98);
     }
     .character-actor-card.unlocked h3 {
-      font-size: .95rem;
-      font-weight: 600;
-      color: #d9e9ff;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #75dcff;
     }
     .character-actor-card.unlocked p {
       color: #9fbee3;
@@ -2664,7 +2735,7 @@
       background:
         radial-gradient(circle at 22% 14%, rgba(139, 169, 227, .14), transparent 58%),
         linear-gradient(165deg, rgba(20, 32, 58, .88), rgba(12, 20, 37, .96));
-      filter: grayscale(.32);
+      filter: grayscale(.42) brightness(.86);
     }
     .character-actor-card.locked img {
       filter: grayscale(.58) blur(1.8px) brightness(.38) saturate(.35);
@@ -2728,8 +2799,8 @@
       font-size: 1.08rem;
       font-weight: 760;
       letter-spacing: .02em;
-      color: #ebf3ff;
-      text-shadow: 0 1px 4px rgba(6, 14, 32, .7);
+      color: #dceaff;
+      text-shadow: 0 1px 0 rgba(239, 249, 255, .18), 0 2px 5px rgba(6, 14, 32, .78);
     }
     .character-actor-card.locked p {
       color: #ffc2c2;
@@ -2776,13 +2847,14 @@
       border-radius: 20px;
       overflow: hidden;
       display: grid;
-      place-items: end center;
+      place-items: center;
       padding: 14px;
       border: 1px dashed rgba(168, 189, 214, .55);
-      box-shadow: 0 10px 22px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .12);
+      box-shadow: 0 10px 22px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .08), inset 0 0 0 1px rgba(0, 0, 0, .35);
       background:
-        radial-gradient(circle at 50% 24%, rgba(255, 255, 255, .14), transparent 44%),
-        linear-gradient(180deg, #596271 0%, #3a424e 55%, #262d38 100%);
+        radial-gradient(circle at 50% 24%, rgba(255, 255, 255, .08), transparent 42%),
+        linear-gradient(180deg, #4e5764 0%, #303844 54%, #1b222c 100%);
+      filter: brightness(.74);
     }
     .profile-avatar--locked.has-custom-image {
       border: 1px solid rgba(144, 214, 255, .55);
@@ -2790,16 +2862,19 @@
       background-position: center;
       background-repeat: no-repeat;
       padding: 0;
-      place-items: stretch;
+      place-items: center;
     }
-    .profile-avatar--locked.has-custom-image::before {
+    .profile-avatar--locked::before {
       content: '';
       position: absolute;
       inset: 0;
-      background: rgba(3, 9, 20, .58);
-      box-shadow: inset 0 0 0 1px rgba(210, 236, 255, .2);
+      background:
+        radial-gradient(circle at 50% 24%, rgba(255, 255, 255, .14), transparent 44%),
+        radial-gradient(circle at 50% 50%, transparent 36%, rgba(0, 0, 0, .56) 100%);
+      box-shadow: inset 0 0 30px rgba(0, 0, 0, .75), inset 0 0 0 1px rgba(210, 236, 255, .15);
+      pointer-events: none;
     }
-    .profile-avatar--locked::before {
+    .profile-avatar--locked::after {
       content: '';
       position: absolute;
       left: 50%;
@@ -2810,25 +2885,38 @@
       background: #090c12;
       border-radius: 44% 44% 12% 12% / 52% 52% 9% 9%;
       box-shadow: 0 -16px 0 -7px #090c12, 0 16px 24px rgba(0, 0, 0, .38);
+      pointer-events: none;
     }
     .profile-avatar--locked .profile-avatar-lock-label {
       position: relative;
       z-index: 1;
-      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      gap: 3px;
+      border-radius: 14px;
       border: 1px solid rgba(211, 226, 244, .42);
-      background: rgba(10, 14, 22, .68);
+      background: rgba(8, 12, 20, .74);
       color: #f2f6fb;
       font-size: .78rem;
       letter-spacing: .08em;
       text-transform: uppercase;
-      padding: 5px 10px;
+      padding: 8px 12px;
       backdrop-filter: blur(2px);
+      text-align: center;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05), 0 8px 12px rgba(0, 0, 0, .42);
+    }
+    .profile-avatar--locked .profile-avatar-lock-label .lock-icon {
+      font-size: 1.2em;
+      line-height: 1;
+    }
+    .profile-avatar--locked .profile-avatar-lock-label .lock-text {
+      line-height: 1;
     }
     .profile-avatar--locked.has-custom-image .profile-avatar-lock-label {
       margin: auto;
       font-size: 1rem;
-      padding: 8px 14px;
-      box-shadow: 0 0 12px rgba(0, 0, 0, .4);
+      padding: 10px 16px;
+      box-shadow: 0 0 12px rgba(0, 0, 0, .45);
     }
     .mock-row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
     .mock-box {
@@ -2955,9 +3043,29 @@
         font-size: .86rem;
         padding: 7px 12px;
       }
+      .character-hero__title {
+        font-size: clamp(1.85rem, 1.35rem + 2.5vw, 2.55rem);
+        letter-spacing: .015em;
+        text-shadow:
+          1px 0 0 rgba(22, 9, 3, .86),
+          -1px 0 0 rgba(22, 9, 3, .86),
+          0 1px 0 rgba(22, 9, 3, .86),
+          0 -1px 0 rgba(22, 9, 3, .86),
+          0 2px 0 rgba(69, 24, 7, .68),
+          0 3px 0 rgba(58, 18, 8, .62),
+          0 4px 8px rgba(0, 0, 0, .4),
+          0 0 10px rgba(255, 164, 88, .34);
+      }
       .actors-shell::after {
         filter: blur(4px);
         opacity: .3;
+      }
+      .character-actors-grid {
+        gap: 10px;
+        overflow: visible;
+      }
+      .character-actor-card.unlocked:hover {
+        transform: translateY(-2px) scale(1.015);
       }
     }
   </style>
@@ -5597,7 +5705,10 @@
                 aria-label="Avatar de ${focusedCharacter} en estado bloqueado, sin videos reproducibles disponibles"
                 ${customLockedAvatarUrl ? `style="background-image: url('${customLockedAvatarUrl.replace(/'/g, '%27')}')"` : ''}
               >
-                <span class="profile-avatar-lock-label">🔒 Bloqueado</span>
+                <span class="profile-avatar-lock-label">
+                  <span class="lock-icon">🔒</span>
+                  <span class="lock-text">Bloqueado</span>
+                </span>
               </div>
             `
           : `<img src="${profileImage}" class="profile-avatar" alt="Avatar de ${focusedCharacter}" loading="lazy">`;
@@ -5670,7 +5781,7 @@
                     <article class="character-actor-card locked" aria-disabled="true">
                       <img src="${createPlaceholderCover(item.actorName)}" alt="Actor bloqueado: ${item.actorName}" loading="lazy">
                       <div class="meta">
-                        <h3>${item.actorName} <button type="button" class="neon-btn icon-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
+                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn icon-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
                         <p class="locked-note">🔒 Falta Saludo</p>
                       </div>
                     </article>
@@ -5679,7 +5790,7 @@
                     <article class="character-actor-card unlocked">
                       <img src="${getVideoThumbnail(item.video)}" alt="Miniatura de ${item.actorName} como ${focusedCharacter}" loading="lazy">
                       <div class="meta">
-                        <h3>${item.actorName} <button type="button" class="neon-btn add-greeting-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar otro video para ${item.actorName}">+</button></h3>
+                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn add-greeting-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar otro video para ${item.actorName}">+</button></h3>
                         <p><button type="button" class="neon-btn" data-open-video="${item.video.id}">▶ Ver video</button></p>
                       </div>
                     </article>
@@ -5820,6 +5931,16 @@
           btn.addEventListener('click', () => {
              const videoId = btn.dataset.openVideo || btn.dataset.openVideoModal;
              openVideoDetail(videoId);
+          });
+        });
+        viewIndice.querySelectorAll('[data-open-actor-profile]').forEach((btn) => {
+          btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const actorName = btn.dataset.openActorProfile;
+            if (!actorName) return;
+            state.actorFocus = actorName;
+            state.actorDetailsExpanded = true;
+            changeView('actores');
           });
         });
 
