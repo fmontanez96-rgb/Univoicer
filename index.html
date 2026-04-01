@@ -4059,6 +4059,15 @@
       return getUniverseCover(universeData?.videos || []);
     }
 
+
+    function getUniverseAvatarFallbackEmoji(universeName) {
+      const normalized = normalizeUniverseName(universeName || '');
+      if (!normalized || normalized === normalizeUniverseName('Sin universo') || normalized === normalizeUniverseName('Sin universos') || normalized === normalizeUniverseName('Ninguno')) {
+        return '🌌';
+      }
+      return '🪐';
+    }
+
     function getFilteredUniverseVideos() {
       return getUniverseVideos().filter(v => {
         const m1 = state.filters.personaje === 'todos' || (v.personaje || 'Sin personaje') === state.filters.personaje;
