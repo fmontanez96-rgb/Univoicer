@@ -2648,6 +2648,33 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .character-actor-card .actor-name-btn {
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      border-radius: 8px;
+      padding: 2px 4px;
+      margin: -2px -4px;
+      color: inherit;
+      font: inherit;
+      font-weight: inherit;
+      letter-spacing: inherit;
+      text-shadow: inherit;
+      cursor: pointer;
+      transition: color .2s ease, text-shadow .2s ease, background-color .2s ease;
+    }
+    .character-actor-card .actor-name-btn:hover {
+      color: #dff9ff;
+      text-shadow: 0 0 10px rgba(108, 239, 255, .55);
+      background: rgba(62, 161, 218, .2);
+    }
+    .character-actor-card .actor-name-btn:focus-visible {
+      outline: 2px solid rgba(160, 229, 255, .84);
+      outline-offset: 1px;
+    }
     .character-actor-card p {
       margin: 0;
       color: #c3d8f4;
@@ -5726,7 +5753,7 @@
                     <article class="character-actor-card locked" aria-disabled="true">
                       <img src="${createPlaceholderCover(item.actorName)}" alt="Actor bloqueado: ${item.actorName}" loading="lazy">
                       <div class="meta">
-                        <h3>${item.actorName} <button type="button" class="neon-btn icon-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
+                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn icon-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar video para ${item.actorName}">+</button></h3>
                         <p class="locked-note">🔒 Falta Saludo</p>
                       </div>
                     </article>
@@ -5735,7 +5762,7 @@
                     <article class="character-actor-card unlocked">
                       <img src="${getVideoThumbnail(item.video)}" alt="Miniatura de ${item.actorName} como ${focusedCharacter}" loading="lazy">
                       <div class="meta">
-                        <h3>${item.actorName} <button type="button" class="neon-btn add-greeting-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar otro video para ${item.actorName}">+</button></h3>
+                        <h3><button type="button" class="actor-name-btn" data-open-actor-profile="${item.actorName}" aria-label="Abrir perfil de ${item.actorName}">${item.actorName}</button> <button type="button" class="neon-btn add-greeting-btn" data-add-greeting-actor="${item.actorName}" aria-label="Agregar otro video para ${item.actorName}">+</button></h3>
                         <p><button type="button" class="neon-btn" data-open-video="${item.video.id}">▶ Ver video</button></p>
                       </div>
                     </article>
@@ -5876,6 +5903,16 @@
           btn.addEventListener('click', () => {
              const videoId = btn.dataset.openVideo || btn.dataset.openVideoModal;
              openVideoDetail(videoId);
+          });
+        });
+        viewIndice.querySelectorAll('[data-open-actor-profile]').forEach((btn) => {
+          btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const actorName = btn.dataset.openActorProfile;
+            if (!actorName) return;
+            state.actorFocus = actorName;
+            state.actorDetailsExpanded = true;
+            changeView('actores');
           });
         });
 
