@@ -2518,7 +2518,7 @@
     .character-actor-card {
       --card-border-top: rgba(176, 230, 255, .42);
       --card-border-bottom: rgba(17, 36, 72, .85);
-      border: 1px solid rgba(111, 180, 255, .32);
+      border: 1px solid rgba(118, 194, 255, .46);
       border-radius: 14px;
       overflow: hidden;
       position: relative;
@@ -2527,15 +2527,18 @@
         radial-gradient(circle at 18% 10%, rgba(114, 218, 255, .18), transparent 52%),
         linear-gradient(160deg, rgba(19, 40, 73, .9), rgba(11, 22, 45, .96) 58%, rgba(6, 12, 28, .98));
       box-shadow:
-        inset 0 1px 0 var(--card-border-top),
-        inset 0 -1px 0 var(--card-border-bottom),
-        0 0 0 1px rgba(49, 118, 196, .24),
-        0 11px 26px rgba(3, 8, 22, .5),
-        0 0 26px rgba(57, 135, 214, .22);
+        inset 0 2px 0 rgba(212, 243, 255, .4),
+        inset 0 -2px 0 rgba(6, 18, 42, .9),
+        inset 2px 0 0 rgba(175, 225, 255, .18),
+        inset -2px 0 0 rgba(11, 29, 63, .62),
+        0 0 0 1px rgba(63, 142, 225, .36),
+        0 14px 30px rgba(3, 8, 22, .58),
+        0 0 28px rgba(57, 135, 214, .24);
       text-align: left;
       padding: 0;
       width: 100%;
       min-width: 0;
+      transition: transform .32s cubic-bezier(.22, .61, .36, 1), border-color .28s ease, box-shadow .32s ease, filter .28s ease;
     }
     .character-actor-card::before,
     .character-actor-card::after {
@@ -2550,17 +2553,22 @@
         radial-gradient(1px 1px at 15% 20%, rgba(232, 245, 255, .22), transparent 70%),
         radial-gradient(1.2px 1.2px at 66% 40%, rgba(224, 239, 255, .16), transparent 75%),
         radial-gradient(1px 1px at 82% 74%, rgba(198, 232, 255, .14), transparent 72%),
-        radial-gradient(130% 90% at 100% 0, rgba(120, 222, 255, .09), transparent 58%);
+        radial-gradient(130% 90% at 100% 0, rgba(120, 222, 255, .09), transparent 58%),
+        radial-gradient(circle at 23% 16%, rgba(244, 252, 255, .32) 0 5px, rgba(244, 252, 255, .06) 8px, transparent 18px),
+        repeating-linear-gradient(124deg,
+          rgba(228, 242, 255, .08) 0 2px,
+          rgba(116, 174, 235, .06) 2px 4px,
+          rgba(6, 20, 42, 0) 4px 8px);
       mix-blend-mode: screen;
-      opacity: .68;
+      opacity: .74;
     }
     .character-actor-card::after {
       inset: -2px;
       border-radius: inherit;
       box-shadow:
-        0 0 0 1px rgba(142, 224, 255, .2),
-        0 0 18px rgba(74, 177, 255, .2);
-      opacity: .75;
+        0 0 0 1px rgba(160, 232, 255, .26),
+        0 0 22px rgba(74, 177, 255, .24);
+      opacity: .84;
     }
     .character-actor-card > * {
       position: relative;
@@ -2580,6 +2588,11 @@
       padding: 11px 12px 12px;
       display: grid;
       gap: 6px;
+      background:
+        linear-gradient(180deg, rgba(190, 233, 255, .08), rgba(9, 26, 50, .36) 28%, rgba(8, 20, 39, .52)),
+        repeating-linear-gradient(0deg, rgba(202, 237, 255, .05) 0 1px, rgba(8, 25, 51, .03) 1px 3px);
+      border-top: 1px solid rgba(173, 224, 255, .24);
+      box-shadow: inset 0 1px 0 rgba(235, 248, 255, .16);
     }
     .character-actor-card h3 {
       margin: 0;
@@ -2587,6 +2600,13 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      font-family: "Bangers", "Luckiest Guy", "Comic Sans MS", "Chalkboard SE", cursive, sans-serif;
+      letter-spacing: .02em;
+      color: #9ed9ff;
+      text-shadow:
+        0 1px 0 rgba(255, 255, 255, .28),
+        0 2px 0 rgba(7, 22, 47, .8),
+        0 5px 10px rgba(0, 0, 0, .48);
     }
     .character-actor-card p {
       margin: 0;
@@ -2596,17 +2616,18 @@
     }
     .character-actor-card.unlocked {
       cursor: pointer;
-      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease, filter .25s ease;
       border-color: rgba(136, 229, 255, .46);
     }
     .character-actor-card.unlocked:hover {
       border-color: rgba(155, 239, 255, .92);
-      transform: translateY(-3px);
+      transform: translateY(-5px) scale(1.045);
       box-shadow:
-        inset 0 1px 0 rgba(206, 241, 255, .5),
-        inset 0 -1px 0 rgba(17, 37, 76, .82),
-        var(--shadow),
-        0 0 24px rgba(71, 180, 255, .3);
+        inset 0 2px 0 rgba(232, 248, 255, .55),
+        inset 0 -2px 0 rgba(11, 31, 66, .86),
+        inset 2px 0 0 rgba(184, 229, 255, .2),
+        inset -2px 0 0 rgba(12, 34, 73, .65),
+        0 18px 36px rgba(2, 10, 28, .62),
+        0 0 28px rgba(71, 180, 255, .34);
     }
     .character-actor-card.unlocked img {
       aspect-ratio: 16 / 11;
@@ -2614,9 +2635,9 @@
       filter: saturate(1.18) contrast(1.1) brightness(.98);
     }
     .character-actor-card.unlocked h3 {
-      font-size: .95rem;
-      font-weight: 600;
-      color: #d9e9ff;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #75dcff;
     }
     .character-actor-card.unlocked p {
       color: #9fbee3;
@@ -2627,7 +2648,7 @@
       background:
         radial-gradient(circle at 22% 14%, rgba(139, 169, 227, .14), transparent 58%),
         linear-gradient(165deg, rgba(20, 32, 58, .88), rgba(12, 20, 37, .96));
-      filter: grayscale(.32);
+      filter: grayscale(.42) brightness(.86);
     }
     .character-actor-card.locked img {
       filter: grayscale(.58) blur(1.8px) brightness(.38) saturate(.35);
@@ -2691,8 +2712,8 @@
       font-size: 1.08rem;
       font-weight: 760;
       letter-spacing: .02em;
-      color: #ebf3ff;
-      text-shadow: 0 1px 4px rgba(6, 14, 32, .7);
+      color: #dceaff;
+      text-shadow: 0 1px 0 rgba(239, 249, 255, .18), 0 2px 5px rgba(6, 14, 32, .78);
     }
     .character-actor-card.locked p {
       color: #ffc2c2;
@@ -2921,6 +2942,13 @@
       .actors-shell::after {
         filter: blur(4px);
         opacity: .3;
+      }
+      .character-actors-grid {
+        gap: 10px;
+        overflow: visible;
+      }
+      .character-actor-card.unlocked:hover {
+        transform: translateY(-2px) scale(1.015);
       }
     }
   </style>
