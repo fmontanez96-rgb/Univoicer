@@ -2357,9 +2357,14 @@
       filter: blur(.2px);
     }
     .character-gallery-card:hover h3 {
+      color: #ffe57a;
       text-shadow:
-        0 0 8px color-mix(in srgb, var(--rarity-glow) 42%, rgba(246, 250, 255, .55)),
-        0 1px 1px rgba(5, 10, 18, .72);
+        -1px -1px 0 #102142,
+        1px -1px 0 #102142,
+        -1px 1px 0 #102142,
+        1px 1px 0 #102142,
+        0 0 10px color-mix(in srgb, var(--rarity-glow) 54%, rgba(255, 238, 170, .74)),
+        0 0 22px color-mix(in srgb, var(--rarity-glow) 42%, transparent);
     }
     .character-gallery-card[data-rarity="epico"] {
       border-color: color-mix(in srgb, var(--rarity-glow) 78%, white 22%);
@@ -2396,7 +2401,7 @@
       box-shadow: none;
     }
     .character-gallery-card .meta {
-      padding: 7px 8px 8px;
+      padding: 8px 9px 10px;
       display: grid;
       gap: 4px;
       background: linear-gradient(180deg, rgba(7, 15, 35, .1), rgba(5, 11, 24, .88) 45%);
@@ -2406,21 +2411,31 @@
     }
     .character-gallery-card h3 {
       margin: 0;
-      padding: 1px 0 3px;
-      font-size: 1.02rem;
-      font-weight: 800;
-      line-height: 1.16;
-      color: #f2f8ff;
+      padding: 2px 1px 4px;
+      font-family: "Luckiest Guy", "Bangers", "Baloo 2", "Fredoka", "Comic Sans MS", "Trebuchet MS", cursive, sans-serif;
+      font-size: clamp(1rem, .82rem + .6vw, 1.24rem);
+      font-weight: 900;
+      line-height: 1.08;
+      letter-spacing: .01em;
+      color: #ffd84a;
       border-bottom: 1px solid color-mix(in srgb, var(--rarity-glow) 46%, rgba(232, 242, 255, .22));
       text-shadow:
-        0 1px 0 rgba(5, 10, 23, .72),
-        0 0 12px color-mix(in srgb, var(--rarity-glow) 78%, rgba(242, 248, 255, .72)),
-        0 0 22px color-mix(in srgb, var(--rarity-glow) 60%, transparent);
+        -1px -1px 0 #102142,
+        1px -1px 0 #102142,
+        -1px 1px 0 #102142,
+        1px 1px 0 #102142,
+        0 2px 0 rgba(8, 14, 32, .85),
+        0 0 10px color-mix(in srgb, var(--rarity-glow) 48%, rgba(255, 223, 118, .65)),
+        0 0 20px color-mix(in srgb, var(--rarity-glow) 36%, transparent);
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
-      line-clamp: 2;
+      line-clamp: 3;
       overflow: hidden;
+      overflow-wrap: anywhere;
+      text-wrap: pretty;
+      min-height: calc(1.08em * 2);
+      max-height: calc(1.08em * 3);
     }
     .character-gallery-card p {
       margin: 0;
@@ -2473,7 +2488,14 @@
       backdrop-filter: blur(2px);
     }
     .character-gallery-card[data-locked="true"] .meta h3 {
-      color: #eef4ff;
+      color: #ffeaa0;
+      text-shadow:
+        -1px -1px 0 #1c253d,
+        1px -1px 0 #1c253d,
+        -1px 1px 0 #1c253d,
+        1px 1px 0 #1c253d,
+        0 2px 0 rgba(8, 10, 19, .9),
+        0 0 8px rgba(213, 228, 255, .3);
     }
     .character-gallery-card[data-locked="true"] .meta p {
       color: #c5d0e0;
