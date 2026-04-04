@@ -5796,7 +5796,7 @@
           const universes = [...new Set(item.versions.flatMap(video => getVideoUniverses(video)).filter(Boolean))];
           const unlockedVersion = item.versions.find(video => hasGreetingVideo(video));
           const sourceVersion = unlockedVersion || item.versions[0] || null;
-          const rarity = sourceVersion?.rareza || (unlockedByActor.size ? 'Común' : 'Bloqueado');
+          const rarity = rarezasPermitidas(sourceVersion?.rareza || 'Común');
           return {
             ...item,
             actorCount: unlockedByActor.size + blockedActors.length,
@@ -6441,8 +6441,7 @@
         Legendario: 'Legendarios',
         'Épico': 'Épicos',
         Raro: 'Raros',
-        'Común': 'Comunes',
-        Bloqueado: 'Bloqueados'
+        'Común': 'Comunes'
       };
       const groupedIndexItems = indexItems.reduce((acc, item) => {
         const rarity = item.rareza || 'Común';
@@ -6450,7 +6449,7 @@
         acc.get(rarity).push(item);
         return acc;
       }, new Map());
-      const rarityRenderOrder = ['Legendario', 'Épico', 'Raro', 'Común', 'Bloqueado'];
+      const rarityRenderOrder = ['Legendario', 'Épico', 'Raro', 'Común'];
       viewIndice.innerHTML = `
         <section class="mock-shell">
           <div class="indice-toolbar">
@@ -6614,13 +6613,23 @@
             video: relatedVideo || null
           };
         }),
-        ...blockedOnly.map((characterName) => ({
-          characterName,
-          unlocked: false,
-          rarity: 'Bloqueado',
-          rarityClassName: 'rare-bloqueado',
-          video: null
-        }))
+        ...blockedOnly.map((characterName) => {
+          const normalizedCharacter = normalizeName(characterName);
+          const matchingEntries = VIDEOS.filter((video) => normalizeName(video.personaje || 'Sin personaje') === normalizedCharacter);
+          const rarityRankBest = matchingEntries.reduce((bestRank, video) => {
+            const videoRank = rarityRank(rarezasPermitidas(video.rareza || 'Común'));
+            return videoRank > bestRank ? videoRank : bestRank;
+          }, -1);
+          const rarityLabels = ['Común', 'Raro', 'Épico', 'Legendario'];
+          const rarity = rarityRankBest >= 0 ? rarezasPermitidas(rarityLabels[rarityRankBest]) : 'Común';
+          return {
+            characterName,
+            unlocked: false,
+            rarity,
+            rarityClassName: rarityClass(rarity),
+            video: null
+          };
+        })
       ];
       viewActores.innerHTML = `
         <section class="mock-shell holo-card actors-shell">
