@@ -4049,10 +4049,55 @@
 
     function blockCharacterForActor(actorName, characterName) {
       if (!actorName || !characterName) return;
-      const current = state.blockedCharactersByActor[actorName] || [];
-      state.blockedCharactersByActor[actorName] = [...new Set([...current, characterName])];
+      const cleanActorName = String(actorName || '').trim();
+      const cleanCharacterName = String(characterName || '').trim();
+      if (!cleanActorName || !cleanCharacterName) return;
+      const current = state.blockedCharactersByActor[cleanActorName] || [];
+      state.blockedCharactersByActor[cleanActorName] = [...new Set([...current, cleanCharacterName])];
+      const createdPlaceholder = ensureBlockedCharacterPlaceholder(cleanActorName, cleanCharacterName);
       saveBlockedCharacters();
+      if (createdPlaceholder) saveVideos();
       if (state.view === 'collection') renderCollectionView();
+    }
+
+    function ensureBlockedCharacterPlaceholder(actorName, characterName) {
+      const cleanActorName = String(actorName || '').trim();
+      const cleanCharacterName = String(characterName || '').trim();
+      if (!cleanActorName || !cleanCharacterName) return false;
+      const normalizedActor = normalizeName(cleanActorName);
+      const normalizedCharacter = normalizeName(cleanCharacterName);
+      const alreadyExists = VIDEOS.some((video) => (
+        normalizeName(video.actor_de_doblaje || '') === normalizedActor
+        && normalizeName(video.personaje || '') === normalizedCharacter
+      ));
+      if (alreadyExists) return false;
+      const existingCharacterEntries = VIDEOS.filter((video) => normalizeName(video.personaje || '') === normalizedCharacter);
+      const inheritedUniverses = normalizeUniverseList(
+        existingCharacterEntries.flatMap((item) => getVideoUniverses(item)),
+        { fallbackToUnassigned: true }
+      );
+      const inheritedRarity = existingCharacterEntries.find((item) => item.rareza)?.rareza || 'Común';
+      VIDEOS.push({
+        id: `video-bloqueado-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        titulo: `Registro bloqueado de ${cleanCharacterName}`,
+        universo: inheritedUniverses,
+        personaje: cleanCharacterName,
+        actor_de_doblaje: cleanActorName,
+        url_youtube: '',
+        rareza: inheritedRarity,
+        thumbnail: createPlaceholderCover(cleanCharacterName)
+      });
+      return true;
+    }
+
+    function syncBlockedCharactersToVideoPlaceholders() {
+      let created = false;
+      Object.entries(state.blockedCharactersByActor || {}).forEach(([actorName, blockedList]) => {
+        (Array.isArray(blockedList) ? blockedList : []).forEach((characterName) => {
+          if (ensureBlockedCharacterPlaceholder(actorName, characterName)) created = true;
+        });
+      });
+      if (created) saveVideos();
     }
 
     function normalizeUniverseNodes(nodes) {
@@ -6996,34 +7041,8 @@
           input.value = '';
           return;
         }
-
-        const alreadyRegisteredBlockedVideo = VIDEOS.some((video) => (
-          normalizeName(video.actor_de_doblaje || '') === normalizeName(actor)
-          && normalizeName(video.personaje || '') === normalizedCharacterName
-          && !hasGreetingVideo(video)
-        ));
-
-        if (!alreadyRegisteredBlockedVideo) {
-          const existingCharacterEntries = VIDEOS.filter((video) => normalizeName(video.personaje || '') === normalizedCharacterName);
-          const inheritedUniverses = [...new Set(existingCharacterEntries.flatMap(item => getVideoUniverses(item)).filter(Boolean))];
-          const inheritedRarity = existingCharacterEntries.find(item => item.rareza)?.rareza || 'Común';
-          VIDEOS.push({
-            id: `video-bloqueado-${Date.now()}`,
-            titulo: `Registro bloqueado de ${canonicalCharacterName}`,
-            universo: inheritedUniverses.length ? inheritedUniverses : [SPECIAL_UNASSIGNED_UNIVERSE],
-            personaje: canonicalCharacterName,
-            actor_de_doblaje: actor,
-            url_youtube: '',
-            rareza: inheritedRarity,
-            thumbnail: createPlaceholderCover(canonicalCharacterName)
-          });
-        }
-
-        const current = state.blockedCharactersByActor[actor] || [];
-        state.blockedCharactersByActor[actor] = [...new Set([...current, canonicalCharacterName])];
-
-        saveBlockedCharacters();
-        saveVideos();
+        blockCharacterForActor(actor, canonicalCharacterName);
+        input.value = '';
         refreshDependentViews();
         if (state.view === 'collection') renderCollectionView();
         renderActoresView();
@@ -7218,11 +7237,13 @@
     loadVideosFromStorage();
     hydrateModelWithFallback();
     state.blockedCharactersByActor = loadBlockedCharactersFromStorage();
+    syncBlockedCharactersToVideoPlaceholders();
 
     (async () => {
       initFirebase();
       await loadFromFirebase();
       hydrateModelWithFallback();
+      syncBlockedCharactersToVideoPlaceholders();
       changeView('map');
     })();
   </script>
