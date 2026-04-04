@@ -3767,6 +3767,53 @@
       return model;
     }
 
+    function mergeModelWithLegacyVideos(currentModel, legacyVideos) {
+      const baseModel = parseModelFromStorage(currentModel) || createEmptyCollectionModel();
+      const model = {
+        actors: baseModel.actors.map((actor) => ({ ...actor, characterIds: Array.isArray(actor.characterIds) ? [...new Set(actor.characterIds)] : [] })),
+        characters: baseModel.characters.map((character) => ({
+          ...character,
+          actorIds: Array.isArray(character.actorIds) ? [...new Set(character.actorIds)] : [],
+          universeIds: Array.isArray(character.universeIds) ? [...new Set(character.universeIds)] : [],
+          videoIds: [],
+          unlocked: false
+        })),
+        universes: baseModel.universes.map((universe) => ({
+          ...universe,
+          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : []
+        })),
+        videos: []
+      };
+
+      const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
+      const characterMap = new Map(model.characters.map((character) => [normalizeEntityName(character.name), character]));
+      const universeMap = new Map(model.universes.map((universe) => [normalizeEntityName(universe.name), universe]));
+
+      (legacyVideos || []).forEach((video, idx) => {
+        const actor = getOrCreateActor(model, video?.actor_de_doblaje || 'Sin actor', actorMap);
+        const character = getOrCreateCharacter(model, video?.personaje || 'Sin personaje', characterMap);
+        linkActorCharacter(actor.id, character.id, model);
+
+        const universeIds = getVideoUniverses(video).filter(Boolean).map((universeName) => {
+          const universe = getOrCreateUniverse(model, universeName, universeMap);
+          linkCharacterUniverse(character.id, universe.id, model);
+          return universe.id;
+        });
+
+        addVideoAndUnlockCharacter({
+          id: video?.id || `video-legacy-${idx + 1}`,
+          youtubeUrl: video?.url_youtube || video?.url_video || '',
+          title: video?.titulo || '',
+          thumbnail: video?.thumbnail || '',
+          characterId: character.id,
+          actorId: actor.id,
+          universeIds
+        }, model);
+      });
+
+      return model;
+    }
+
     function normalizeUniverseName(name) {
       return String(name || '')
         .trim()
@@ -3850,11 +3897,19 @@
       return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 280'><defs><linearGradient id='space' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='%23050b17'/><stop offset='100%' stop-color='%23162543'/></linearGradient></defs><rect width='400' height='280' fill='url(%23space)'/><circle cx='306' cy='72' r='56' fill='%232bf7ff' opacity='.08'/><circle cx='84' cy='214' r='70' fill='%23a78bfa' opacity='.12'/><text x='200' y='160' font-size='96' font-family='Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif' text-anchor='middle'>%F0%9F%8C%8C</text></svg>";
     }
 
+    function isLegacyGeneratedUniverseCover(cover) {
+      const rawCover = String(cover || '').trim();
+      if (!rawCover.startsWith('data:image/svg+xml;utf8,')) return false;
+      return rawCover.includes("id='g'") && rawCover.includes("font-size='30'");
+    }
+
     function getSafeUniverseCover(name, cover) {
+      const normalizedCover = String(cover || '').trim();
+      const effectiveCover = isLegacyGeneratedUniverseCover(normalizedCover) ? '' : normalizedCover;
       if (normalizeUniverseName(name) === normalizeUniverseName('Sin universo')) {
-        return cover || createNoUniversePlaceholderCover();
+        return effectiveCover || createNoUniversePlaceholderCover();
       }
-      return cover || createUniversePlaceholderCover();
+      return effectiveCover || createUniversePlaceholderCover();
     }
 
     function getProgressVisual(completion = 0) {
@@ -4071,7 +4126,7 @@
 
     function saveVideos() {
       localStorage.setItem(VIDEOS_STORAGE_KEY, JSON.stringify(VIDEOS));
-      syncCollectionModelWithVideos(collectionModel);
+      collectionModel = mergeModelWithLegacyVideos(collectionModel, VIDEOS);
       saveCollectionModel();
       scheduleCloudSync();
       renderMapView();
@@ -4612,7 +4667,7 @@
 
           const file = formData.get('portadaArchivo');
           const urlInput = String(formData.get('portadaUrl') || '');
-          let cover = createPlaceholderCover(name);
+          let cover = '';
           try {
             if (coverMode === 'file' && file instanceof File && file.size > 0) {
               if (!file.type.startsWith('image/')) throw new Error('El archivo seleccionado no es una imagen.');
@@ -5152,7 +5207,7 @@
         }
         const file = formData.get('portadaArchivo');
         const rawCoverUrl = String(formData.get('portadaUrl') || '');
-        let nextCover = universeNode?.cover || createPlaceholderCover(cleanName);
+        let nextCover = universeNode?.cover || '';
         try {
           if (editCoverMode === 'file' && file instanceof File && file.size > 0) {
             if (!file.type.startsWith('image/')) throw new Error('El archivo seleccionado no es una imagen.');
@@ -5172,7 +5227,7 @@
         });
         if (universeNode) {
           universeNode.name = cleanName;
-          universeNode.cover = nextCover || createPlaceholderCover(cleanName);
+          universeNode.cover = nextCover || '';
         }
         state.universe = cleanName;
         state.editUniverseFeedback = { type: 'success', text: 'Universo actualizado correctamente.' };
@@ -5843,7 +5898,7 @@
           const universes = getCharacterUniverseList(item.name, { fallbackToUnassigned: false });
           const unlockedVersion = item.versions.find(video => hasGreetingVideo(video));
           const sourceVersion = unlockedVersion || item.versions[0] || null;
-          const rarity = sourceVersion?.rareza || (unlockedByActor.size ? 'Común' : 'Bloqueado');
+          const rarity = rarezasPermitidas(sourceVersion?.rareza || 'Común');
           return {
             ...item,
             actorCount: unlockedByActor.size + blockedActors.length,
@@ -6483,8 +6538,7 @@
         Legendario: 'Legendarios',
         'Épico': 'Épicos',
         Raro: 'Raros',
-        'Común': 'Comunes',
-        Bloqueado: 'Bloqueados'
+        'Común': 'Comunes'
       };
       const groupedIndexItems = indexItems.reduce((acc, item) => {
         const rarity = item.rareza || 'Común';
@@ -6492,7 +6546,7 @@
         acc.get(rarity).push(item);
         return acc;
       }, new Map());
-      const rarityRenderOrder = ['Legendario', 'Épico', 'Raro', 'Común', 'Bloqueado'];
+      const rarityRenderOrder = ['Legendario', 'Épico', 'Raro', 'Común'];
       viewIndice.innerHTML = `
         <section class="mock-shell">
           <div class="indice-toolbar">
@@ -6656,13 +6710,23 @@
             video: relatedVideo || null
           };
         }),
-        ...blockedOnly.map((characterName) => ({
-          characterName,
-          unlocked: false,
-          rarity: 'Bloqueado',
-          rarityClassName: 'rare-bloqueado',
-          video: null
-        }))
+        ...blockedOnly.map((characterName) => {
+          const normalizedCharacter = normalizeName(characterName);
+          const matchingEntries = VIDEOS.filter((video) => normalizeName(video.personaje || 'Sin personaje') === normalizedCharacter);
+          const rarityRankBest = matchingEntries.reduce((bestRank, video) => {
+            const videoRank = rarityRank(rarezasPermitidas(video.rareza || 'Común'));
+            return videoRank > bestRank ? videoRank : bestRank;
+          }, -1);
+          const rarityLabels = ['Común', 'Raro', 'Épico', 'Legendario'];
+          const rarity = rarityRankBest >= 0 ? rarezasPermitidas(rarityLabels[rarityRankBest]) : 'Común';
+          return {
+            characterName,
+            unlocked: false,
+            rarity,
+            rarityClassName: rarityClass(rarity),
+            video: null
+          };
+        })
       ];
       viewActores.innerHTML = `
         <section class="mock-shell holo-card actors-shell">
