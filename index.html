@@ -3767,6 +3767,53 @@
       return model;
     }
 
+    function mergeModelWithLegacyVideos(currentModel, legacyVideos) {
+      const baseModel = parseModelFromStorage(currentModel) || createEmptyCollectionModel();
+      const model = {
+        actors: baseModel.actors.map((actor) => ({ ...actor, characterIds: Array.isArray(actor.characterIds) ? [...new Set(actor.characterIds)] : [] })),
+        characters: baseModel.characters.map((character) => ({
+          ...character,
+          actorIds: Array.isArray(character.actorIds) ? [...new Set(character.actorIds)] : [],
+          universeIds: Array.isArray(character.universeIds) ? [...new Set(character.universeIds)] : [],
+          videoIds: [],
+          unlocked: false
+        })),
+        universes: baseModel.universes.map((universe) => ({
+          ...universe,
+          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : []
+        })),
+        videos: []
+      };
+
+      const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
+      const characterMap = new Map(model.characters.map((character) => [normalizeEntityName(character.name), character]));
+      const universeMap = new Map(model.universes.map((universe) => [normalizeEntityName(universe.name), universe]));
+
+      (legacyVideos || []).forEach((video, idx) => {
+        const actor = getOrCreateActor(model, video?.actor_de_doblaje || 'Sin actor', actorMap);
+        const character = getOrCreateCharacter(model, video?.personaje || 'Sin personaje', characterMap);
+        linkActorCharacter(actor.id, character.id, model);
+
+        const universeIds = getVideoUniverses(video).filter(Boolean).map((universeName) => {
+          const universe = getOrCreateUniverse(model, universeName, universeMap);
+          linkCharacterUniverse(character.id, universe.id, model);
+          return universe.id;
+        });
+
+        addVideoAndUnlockCharacter({
+          id: video?.id || `video-legacy-${idx + 1}`,
+          youtubeUrl: video?.url_youtube || video?.url_video || '',
+          title: video?.titulo || '',
+          thumbnail: video?.thumbnail || '',
+          characterId: character.id,
+          actorId: actor.id,
+          universeIds
+        }, model);
+      });
+
+      return model;
+    }
+
     function normalizeUniverseName(name) {
       return String(name || '')
         .trim()
@@ -4015,7 +4062,7 @@
 
     function saveVideos() {
       localStorage.setItem(VIDEOS_STORAGE_KEY, JSON.stringify(VIDEOS));
-      collectionModel = migrateLegacyVideosToModel(VIDEOS);
+      collectionModel = mergeModelWithLegacyVideos(collectionModel, VIDEOS);
       saveCollectionModel();
       scheduleCloudSync();
       renderMapView();
