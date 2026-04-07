@@ -7896,7 +7896,7 @@
       updateMarathonLabel();
     }
 
-    function nextInMarathon() {
+    async function nextInMarathon() {  // <-- 1. Agrega 'async' aquí
       if (!state.marathon.isPlaying) return;
       if (state.marathon.position >= state.marathon.queue.length - 1) {
         state.marathon.isPlaying = false;
@@ -7906,10 +7906,10 @@
       state.selectedVideoId = current.id;
       if (state.view === 'universe') renderUniverseView();
       updateMarathonLabel();
-
-      const player = await ensureMarathonPlayer();
+    
+      const player = await ensureMarathonPlayer(); // <-- 2. Ahora este await funcionará sin dar error
       if (!player) return;
-      if (player.loadVideoById) player.loadVideoById(currentId);
+      if (player.loadVideoById) player.loadVideoById(currentId); 
       attachPlayerEndedHandler();
     }
 
