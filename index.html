@@ -4071,6 +4071,10 @@
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
     const NODE_HALF_WIDTH = 110;
     const NODE_HALF_HEIGHT = 93;
+    const WORLD_NODE_HALF_WIDTH = 90;
+    const WORLD_NODE_HALF_HEIGHT = 65;
+    const WORLD_ORBIT_BASE_RADIUS = 190;
+    const WORLD_ORBIT_MIN_CENTER_DISTANCE = 230;
     let firebaseDb = null;
     let cloudSyncTimer = null;
     let collectionModel = {
@@ -5158,11 +5162,37 @@
 
     function getUniverseBounds() {
       if (!state.universeNodes.length) return null;
-      const minX = Math.min(...state.universeNodes.map(node => node.x - NODE_HALF_WIDTH));
-      const maxX = Math.max(...state.universeNodes.map(node => node.x + NODE_HALF_WIDTH));
-      const minY = Math.min(...state.universeNodes.map(node => node.y - NODE_HALF_HEIGHT));
-      const maxY = Math.max(...state.universeNodes.map(node => node.y + NODE_HALF_HEIGHT));
+      const bounds = state.universeNodes.reduce((acc, node) => {
+        let minX = node.x - NODE_HALF_WIDTH;
+        let maxX = node.x + NODE_HALF_WIDTH;
+        let minY = node.y - NODE_HALF_HEIGHT;
+        let maxY = node.y + NODE_HALF_HEIGHT;
+        if (state.expandedUniverses.has(node.id)) {
+          const worldCount = getUniverseWorldEntries(node.name).length;
+          const orbitRadius = getWorldOrbitRadius(worldCount);
+          if (orbitRadius > 0) {
+            minX = Math.min(minX, node.x - orbitRadius - WORLD_NODE_HALF_WIDTH);
+            maxX = Math.max(maxX, node.x + orbitRadius + WORLD_NODE_HALF_WIDTH);
+            minY = Math.min(minY, node.y - orbitRadius - WORLD_NODE_HALF_HEIGHT);
+            maxY = Math.max(maxY, node.y + orbitRadius + WORLD_NODE_HALF_HEIGHT);
+          }
+        }
+        acc.minX = Math.min(acc.minX, minX);
+        acc.maxX = Math.max(acc.maxX, maxX);
+        acc.minY = Math.min(acc.minY, minY);
+        acc.maxY = Math.max(acc.maxY, maxY);
+        return acc;
+      }, { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY });
+      const { minX, maxX, minY, maxY } = bounds;
       return { minX, maxX, minY, maxY };
+    }
+
+    function getWorldOrbitRadius(worldCount) {
+      if (!Number.isFinite(worldCount) || worldCount <= 0) return 0;
+      const minimumRadiusForSpacing = worldCount > 1
+        ? Math.ceil(WORLD_ORBIT_MIN_CENTER_DISTANCE / (2 * Math.sin(Math.PI / worldCount)))
+        : WORLD_ORBIT_BASE_RADIUS;
+      return Math.max(WORLD_ORBIT_BASE_RADIUS, minimumRadiusForSpacing);
     }
 
     function getUniverseCentroid() {
@@ -5344,19 +5374,14 @@
           const entries = getUniverseWorldEntries(node.name)
             .map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }));
           const worldCount = entries.length;
-          const baseRadius = 190;
-          const minCenterDistance = 230;
-          const minimumRadiusForSpacing = worldCount > 1
-            ? Math.ceil(minCenterDistance / (2 * Math.sin(Math.PI / worldCount)))
-            : baseRadius;
-          const orbitRadius = Math.max(baseRadius, minimumRadiusForSpacing);
+          const orbitRadius = getWorldOrbitRadius(worldCount);
           const startAngle = ((Math.abs(hashCode(`${node.id}-${worldCount}`)) % 360) * Math.PI) / 180;
           entries.forEach((entry, index) => {
             const angle = startAngle + ((Math.PI * 2 * index) / Math.max(1, worldCount));
             const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
             const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
-            const safeX = Math.round(worldX - 90);
-            const safeY = Math.round(worldY - 65);
+            const safeX = Math.round(worldX - WORLD_NODE_HALF_WIDTH);
+            const safeY = Math.round(worldY - WORLD_NODE_HALF_HEIGHT);
             const safeWorldName = escapeHtml(entry.name);
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
             const worldCenterX = worldX;
@@ -5667,14 +5692,14 @@
           if (!Number.isFinite(baseAngle)) return;
           const fallbackWorldRectX = Number.parseFloat(worldEl.style.left || '0');
           const fallbackWorldRectY = Number.parseFloat(worldEl.style.top || '0');
-          const dx = Number.isFinite(baseDx) ? baseDx : (fallbackWorldRectX + 90 - parentNode.x);
-          const dy = Number.isFinite(baseDy) ? baseDy : (fallbackWorldRectY + 65 - parentNode.y);
+          const dx = Number.isFinite(baseDx) ? baseDx : (fallbackWorldRectX + WORLD_NODE_HALF_WIDTH - parentNode.x);
+          const dy = Number.isFinite(baseDy) ? baseDy : (fallbackWorldRectY + WORLD_NODE_HALF_HEIGHT - parentNode.y);
           const targetCenterX = parentNode.x + dx;
           const targetCenterY = parentNode.y + dy;
           worldEl.dataset.baseDx = `${Math.round(dx)}`;
           worldEl.dataset.baseDy = `${Math.round(dy)}`;
-          worldEl.style.left = `${Math.round(targetCenterX - 90)}px`;
-          worldEl.style.top = `${Math.round(targetCenterY - 65)}px`;
+          worldEl.style.left = `${Math.round(targetCenterX - WORLD_NODE_HALF_WIDTH)}px`;
+          worldEl.style.top = `${Math.round(targetCenterY - WORLD_NODE_HALF_HEIGHT)}px`;
           const worldKey = worldEl.dataset.worldKey || '';
           const pathEl = viewMap.querySelector(`.map-link-path[data-parent-id="${parentNodeId}"][data-world-key="${worldKey}"]`);
           updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle);
@@ -5825,8 +5850,26 @@
           }
           event.stopPropagation();
           const clickedNodeId = nodeEl.dataset.nodeId || '';
-          if (state.expandedUniverses.has(clickedNodeId)) state.expandedUniverses.delete(clickedNodeId);
-          else state.expandedUniverses.add(clickedNodeId);
+          if (state.expandedUniverses.has(clickedNodeId)) {
+            state.expandedUniverses.delete(clickedNodeId);
+          } else {
+            state.expandedUniverses.add(clickedNodeId);
+            const clickedNode = state.universeNodes.find((item) => item.id === clickedNodeId);
+            if (clickedNode) {
+              const orbitRadius = getWorldOrbitRadius(getUniverseWorldEntries(clickedNode.name).length);
+              if (orbitRadius > 0) {
+                const marginX = orbitRadius + WORLD_NODE_HALF_WIDTH;
+                const marginY = orbitRadius + WORLD_NODE_HALF_HEIGHT;
+                const boundedX = Math.max(marginX, Math.min(clickedNode.x, state.mapCanvas.width - marginX));
+                const boundedY = Math.max(marginY, Math.min(clickedNode.y, state.mapCanvas.height - marginY));
+                if (boundedX !== clickedNode.x || boundedY !== clickedNode.y) {
+                  clickedNode.x = Math.round(boundedX);
+                  clickedNode.y = Math.round(boundedY);
+                  saveUniverseNodes();
+                }
+              }
+            }
+          }
           renderMapView();
         });
       });
