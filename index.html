@@ -720,6 +720,17 @@
       box-shadow: none;
       border-color: transparent;
     }
+    .map-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+    .map-reset-btn {
+      padding: 6px 10px;
+      font-size: .78rem;
+      border-radius: 10px;
+    }
     .cover-input-group[hidden] { display: none; }
     .map-popup .popup-feedback { min-height: 16px; font-size: .8rem; color: #ffd2d2; margin: 0; }
     .map-popup button[type="submit"] {
@@ -5309,13 +5320,8 @@
         const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const isExpanded = state.expandedUniverses.has(node.id);
         if (isExpanded) {
-          const { characterWorldEntries, universeChildWorldEntries } = getUniverseWorldEntries(node.name);
-          const hasUniverseChildren = universeChildWorldEntries.length > 0;
-          const sourceFilter = state.mapWorldFilter === 'character' ? 'character' : 'universe';
-          const entries = (sourceFilter === 'character'
-            ? characterWorldEntries.map((entry) => ({ ...entry, type: 'character' }))
-            : universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child' }))
-          ).slice(0, 12);
+          const { universeChildWorldEntries } = getUniverseWorldEntries(node.name);
+          const entries = universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child' })).slice(0, 12);
           const orbitRadius = 170;
           entries.forEach((entry, index) => {
             const angle = (Math.PI * 2 * index) / Math.max(1, entries.length);
@@ -5329,13 +5335,6 @@
               </button>
             `);
           });
-          if (!entries.length && hasUniverseChildren && sourceFilter === 'character') {
-            worldNodes.push(`
-              <span class="map-world-node" style="left:${Math.max(16, Math.min(state.mapCanvas.width - 196, node.x - 90))}px; top:${Math.max(16, Math.min(state.mapCanvas.height - 40, node.y - 16))}px; opacity:.7;">
-                Cambia filtro a "Mundos-universo"
-              </span>
-            `);
-          }
         }
         const floatDelay = ((Math.abs(hashCode(node.id)) % 24) / 10).toFixed(1);
         const safeName = escapeHtml(node.name);
@@ -5360,9 +5359,8 @@
       }).join('');
       viewMap.innerHTML = `
         <div class="universe-map-shell">
-          <div class="cover-mode" role="tablist" aria-label="Filtro de mundos del mapa">
-            <button type="button" data-map-world-filter="universe" class="${state.mapWorldFilter !== 'character' ? 'active' : ''}" role="tab" aria-selected="${state.mapWorldFilter !== 'character' ? 'true' : 'false'}">Mundos-universo</button>
-            <button type="button" data-map-world-filter="character" class="${state.mapWorldFilter === 'character' ? 'active' : ''}" role="tab" aria-selected="${state.mapWorldFilter === 'character' ? 'true' : 'false'}">Mundos-personaje</button>
+          <div class="map-toolbar">
+            <button type="button" id="undoAllAbsorptions" class="neon-btn map-reset-btn" aria-label="Deshacer todas las absorciones">↺ Deshacer absorciones</button>
           </div>
           <div id="universeMapCanvas" aria-label="Mapa de universos explorable">
             <div class="map-nebula-layer" aria-hidden="true"></div>
@@ -5784,16 +5782,23 @@
         });
       });
 
-      viewMap.querySelectorAll('[data-map-world-filter]').forEach((filterBtn) => {
-        filterBtn.addEventListener('click', (event) => {
+      const undoAllAbsorptionsBtn = viewMap.querySelector('#undoAllAbsorptions');
+      if (undoAllAbsorptionsBtn) {
+        undoAllAbsorptionsBtn.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          const nextFilter = filterBtn.dataset.mapWorldFilter === 'character' ? 'character' : 'universe';
-          if (state.mapWorldFilter === nextFilter) return;
-          state.mapWorldFilter = nextFilter;
+          state.universeMemberships = {};
+          state.universeNodes = (state.universeNodes || []).map((node) => ({
+            ...node,
+            kind: 'universe',
+            parentUniverseId: ''
+          }));
+          state.mapAbsorptionEffect = null;
+          saveUniverseMemberships();
+          saveUniverseNodes();
           renderMapView();
         });
-      });
+      }
 
       mapWorld.addEventListener('contextmenu', (event) => {
         event.preventDefault();
