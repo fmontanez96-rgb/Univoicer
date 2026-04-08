@@ -531,8 +531,10 @@
 
     /* --- INICIO NUEVO DISEÑO ORBES ESTELARES --- */
     .universe-node {
-      --w: 180px;
-      --h: 230px;
+      --w: 190px;
+      --h: 240px;
+      --orb-size: 130px;
+      --title-size: 0.95rem;
       position: absolute;
       width: var(--w);
       height: var(--h);
@@ -560,6 +562,21 @@
       z-index: 10; /* Lo trae al frente al hacer hover */
     }
 
+    .universe-node--universe {
+      --w: 230px;
+      --h: 292px;
+      --orb-size: 164px;
+      --title-size: 1.02rem;
+    }
+
+    .universe-node--world {
+      --w: 180px;
+      --h: 230px;
+      --orb-size: 126px;
+      --title-size: 0.92rem;
+      z-index: 4;
+    }
+
     .universe-node.is-dragging {
       z-index: 12;
     }
@@ -572,8 +589,8 @@
 
     /* El Orbe Circular con efecto Neón */
     .universe-node .orb-container {
-      width: 130px;
-      height: 130px;
+      width: var(--orb-size);
+      height: var(--orb-size);
       border-radius: 50%; /* Esto hace el círculo perfecto */
       border: 3px solid #00bfff;
       box-shadow: 0 0 18px rgba(0, 191, 255, 0.6), inset 0 0 24px rgba(0, 191, 255, 0.5);
@@ -629,7 +646,7 @@
 
     .universe-node h3 {
       margin: 0 0 4px 0;
-      font-size: 0.95rem;
+      font-size: var(--title-size);
       color: #ffffff;
       letter-spacing: 1px;
       text-transform: uppercase;
@@ -5279,6 +5296,7 @@
       const parentNode = state.universeNodes.find((node) => normalizeUniverseName(node.name) === normalizeUniverseName(universeName));
       if (!parentNode) return [];
       const byChildName = new Map();
+      const universeMap = groupByUniverse();
       Object.entries(state.universeMemberships || {}).forEach(([childId, parentId]) => {
         if (parentId !== parentNode.id) return;
         const childNode = state.universeNodes.find((node) => node.id === childId);
@@ -5286,8 +5304,15 @@
         const childName = String(childNode.name).trim();
         if (!childName) return;
         const childKey = normalizeUniverseName(childName);
+        const childUniverseData = universeMap[childKey] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         if (!byChildName.has(childKey)) {
-          byChildName.set(childKey, { name: childName, unlocked: true });
+          byChildName.set(childKey, {
+            id: childNode.id,
+            name: childName,
+            cover: childNode.cover || '',
+            unlocked: true,
+            stats: childUniverseData
+          });
         }
       });
       return [...byChildName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
@@ -5321,17 +5346,33 @@
         const isExpanded = state.expandedUniverses.has(node.id);
         if (isExpanded) {
           const { universeChildWorldEntries } = getUniverseWorldEntries(node.name);
-          const entries = universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child' })).slice(0, 12);
+          const entries = universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child' }));
           const orbitRadius = 170;
           entries.forEach((entry, index) => {
             const angle = (Math.PI * 2 * index) / Math.max(1, entries.length);
             const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
             const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
-            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 196, worldX - 90));
-            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 40, worldY - 16));
+            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
+            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 230, worldY - 115));
+            const safeWorldName = escapeHtml(entry.name);
+            const stats = entry.stats || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
+            const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
             worldNodes.push(`
-              <button class="map-world-node" data-world-name="${escapeHtml(entry.name)}" data-world-type="${entry.type}" data-locked="${entry.unlocked ? '0' : '1'}" style="left:${safeX}px; top:${safeY}px;">
-                ${escapeHtml(entry.name)}
+              <button class="universe-node universe-node--world" data-world-name="${safeWorldName}" data-world-type="${entry.type}" data-locked="${entry.unlocked ? '0' : '1'}" style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;">
+                <div class="orb-container">
+                  <img class="universe-cover" src="${getSafeUniverseCover(entry.name, entry.cover)}" alt="Portada de ${safeWorldName}" loading="lazy">
+                  <span class="cover-fallback">Sin portada</span>
+                </div>
+                <div class="node-info">
+                  <h3>${safeWorldName}</h3>
+                  <p>${stats.unlockedCharacters}/${stats.totalCharacters} PERSONAJES</p>
+                  <span class="completion-badge completion-badge--${stats.state}">
+                    ${stats.state === 'complete' ? 'COMPLETO' : stats.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
+                  </span>
+                  <span class="completion-track" aria-hidden="true">
+                    <span class="completion-fill completion-fill--${stats.state}" style="width:${stats.completion}%;"></span>
+                  </span>
+                </div>
               </button>
             `);
           });
@@ -5339,7 +5380,7 @@
         const floatDelay = ((Math.abs(hashCode(node.id)) % 24) / 10).toFixed(1);
         const safeName = escapeHtml(node.name);
         return `
-          <button class="universe-node" data-node-id="${node.id}" data-open="${safeName}" style="left:${node.x - NODE_HALF_WIDTH}px; top:${node.y - NODE_HALF_HEIGHT}px; --float-delay:-${floatDelay}s;">
+          <button class="universe-node universe-node--universe" data-node-id="${node.id}" data-open="${safeName}" style="left:${node.x - NODE_HALF_WIDTH}px; top:${node.y - NODE_HALF_HEIGHT}px; --float-delay:-${floatDelay}s;">
             <div class="orb-container">
               <img class="universe-cover" src="${getSafeUniverseCover(node.name, node.cover)}" alt="Portada de ${safeName}" loading="lazy">
               <span class="cover-fallback">Sin portada</span>
@@ -5763,7 +5804,12 @@
         });
       });
 
-      viewMap.querySelectorAll('.map-world-node').forEach((worldEl) => {
+      viewMap.querySelectorAll('.universe-node--world').forEach((worldEl) => {
+        const coverEl = worldEl.querySelector('.universe-cover');
+        coverEl?.addEventListener('error', () => {
+          coverEl.classList.add('is-broken');
+          coverEl.src = getSafeUniverseCover(worldEl.dataset.worldName, '');
+        });
         worldEl.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
