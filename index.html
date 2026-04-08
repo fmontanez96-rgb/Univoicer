@@ -490,19 +490,25 @@
     .map-link-path {
       fill: none;
       stroke: #38c6ff;
-      stroke-width: 3.2;
+      stroke-width: var(--link-width, 3.2);
       stroke-linecap: round;
+      stroke-dasharray: var(--dash-pattern, none);
       filter:
         drop-shadow(0 0 5px rgba(76, 205, 255, .95))
         drop-shadow(0 0 11px rgba(67, 166, 255, .95))
         drop-shadow(0 0 22px rgba(53, 136, 255, .68));
       opacity: .94;
-      animation: connectorGlow 1.9s ease-in-out infinite alternate;
+      animation: connectorGlow 1.9s ease-in-out infinite alternate, connectorFlow 5.6s linear infinite;
     }
 
     @keyframes connectorGlow {
       from { opacity: .72; }
       to { opacity: 1; }
+    }
+
+    @keyframes connectorFlow {
+      from { stroke-dashoffset: 0; }
+      to { stroke-dashoffset: -120; }
     }
 
     .absorption-effect {
@@ -5350,6 +5356,47 @@
       return getUniverseChildWorldEntries(universeName);
     }
 
+    function getConnectorVariant(seedKey) {
+      const hash = Math.abs(hashCode(String(seedKey || 'connector')));
+      const curveStrength = 0.16 + ((hash % 35) / 100);
+      const arcBias = 0.24 + (((hash >> 3) % 30) / 100);
+      const twistDirection = (hash & 1) ? 1 : -1;
+      const sway = 6 + ((hash >> 6) % 18);
+      const width = (2.6 + (((hash >> 4) % 14) / 10)).toFixed(2);
+      const dashA = 24 + ((hash >> 2) % 24);
+      const dashB = 12 + ((hash >> 5) % 18);
+      return {
+        curveStrength: Number(curveStrength.toFixed(3)),
+        arcBias: Number(arcBias.toFixed(3)),
+        twistDirection,
+        sway,
+        width,
+        dashPattern: `${dashA} ${dashB}`
+      };
+    }
+
+    function buildConnectorPath(startX, startY, endX, endY, angle, options = {}) {
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const tangentX = dx / distance;
+      const tangentY = dy / distance;
+      const normalX = -tangentY;
+      const normalY = tangentX;
+      const curveStrength = Number.isFinite(options.curveStrength) ? options.curveStrength : 0.22;
+      const arcBias = Number.isFinite(options.arcBias) ? options.arcBias : 0.3;
+      const twistDirection = options.twistDirection === -1 ? -1 : 1;
+      const sway = Number.isFinite(options.sway) ? options.sway : 0;
+      const bendPrimary = Math.max(24, Math.min(160, distance * curveStrength));
+      const bendSecondary = Math.max(16, Math.min(120, bendPrimary * (0.68 + (arcBias * 0.45))));
+      const angleSway = Math.sin((angle || 0) * 2.2) * sway;
+      const control1X = startX + (dx * (0.24 + (arcBias * 0.14))) + (normalX * ((bendPrimary + angleSway) * twistDirection));
+      const control1Y = startY + (dy * (0.24 + (arcBias * 0.14))) + (normalY * ((bendPrimary + angleSway) * twistDirection));
+      const control2X = startX + (dx * (0.74 - (arcBias * 0.12))) - (normalX * ((bendSecondary - angleSway) * twistDirection));
+      const control2Y = startY + (dy * (0.74 - (arcBias * 0.12))) - (normalY * ((bendSecondary - angleSway) * twistDirection));
+      return `M ${Math.round(startX)} ${Math.round(startY)} C ${Math.round(control1X)} ${Math.round(control1Y)} ${Math.round(control2X)} ${Math.round(control2Y)} ${Math.round(endX)} ${Math.round(endY)}`;
+    }
+
     function renderMapView() {
       const universes = groupByUniverse();
       ensureUniverseNodes();
@@ -5388,16 +5435,20 @@
             const worldCenterY = worldY;
             const baseDx = Math.round(worldCenterX - node.x);
             const baseDy = Math.round(worldCenterY - node.y);
-            const bendPull = Math.max(28, Math.min(92, orbitRadius * 0.22));
-            const controlX = ((node.x + worldCenterX) / 2) + (Math.cos(angle) * bendPull);
-            const controlY = ((node.y + worldCenterY) / 2) + (Math.sin(angle) * bendPull);
+            const connectorVariant = getConnectorVariant(`${node.id}:${entry.worldKey}`);
+            const connectorPath = buildConnectorPath(node.x, node.y, worldCenterX, worldCenterY, angle, connectorVariant);
             worldLinks.push(`
               <path
                 class="map-link-path"
                 data-parent-id="${node.id}"
                 data-world-key="${entry.worldKey}"
                 data-base-angle="${angle.toFixed(4)}"
-                d="M ${node.x} ${node.y} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(worldCenterX)} ${Math.round(worldCenterY)}"
+                data-curve-strength="${connectorVariant.curveStrength}"
+                data-arc-bias="${connectorVariant.arcBias}"
+                data-twist-direction="${connectorVariant.twistDirection}"
+                data-sway="${connectorVariant.sway}"
+                style="--link-width:${connectorVariant.width}; --dash-pattern:${connectorVariant.dashPattern};"
+                d="${connectorPath}"
               ></path>
             `);
             worldNodes.push(`
@@ -5674,10 +5725,17 @@
 
       const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle) => {
         if (!pathEl) return;
-        const bendPull = Math.max(30, Math.min(130, Math.hypot(endX - startX, endY - startY) * 0.22));
-        const controlX = ((startX + endX) / 2) + (Math.cos(angle) * bendPull);
-        const controlY = ((startY + endY) / 2) + (Math.sin(angle) * bendPull);
-        pathEl.setAttribute('d', `M ${Math.round(startX)} ${Math.round(startY)} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(endX)} ${Math.round(endY)}`);
+        const curveStrength = Number.parseFloat(pathEl.dataset.curveStrength || '');
+        const arcBias = Number.parseFloat(pathEl.dataset.arcBias || '');
+        const twistDirection = Number.parseInt(pathEl.dataset.twistDirection || '1', 10);
+        const sway = Number.parseFloat(pathEl.dataset.sway || '');
+        const path = buildConnectorPath(startX, startY, endX, endY, angle, {
+          curveStrength: Number.isFinite(curveStrength) ? curveStrength : 0.22,
+          arcBias: Number.isFinite(arcBias) ? arcBias : 0.3,
+          twistDirection: twistDirection === -1 ? -1 : 1,
+          sway: Number.isFinite(sway) ? sway : 0
+        });
+        pathEl.setAttribute('d', path);
       };
 
       const updateExpandedWorldsForParent = (parentNodeId) => {
