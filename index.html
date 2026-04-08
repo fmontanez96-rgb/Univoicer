@@ -5497,7 +5497,7 @@
       viewMap.innerHTML = `
         <div class="universe-map-shell">
           <div class="map-toolbar">
-            <button type="button" id="undoAllAbsorptions" class="neon-btn map-reset-btn" aria-label="Deshacer todas las absorciones">↺ Deshacer absorciones</button>
+            <button type="button" id="undoAllAbsorptions" class="neon-btn map-reset-btn" aria-label="Explosión Big Bang">💥 Explosión Big Bang</button>
           </div>
           <div id="universeMapCanvas" aria-label="Mapa de universos explorable">
             <div class="map-nebula-layer" aria-hidden="true"></div>
@@ -5961,12 +5961,78 @@
         undoAllAbsorptionsBtn.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          state.universeMemberships = {};
-          state.universeNodes = (state.universeNodes || []).map((node) => ({
-            ...node,
-            kind: 'universe',
-            parentUniverseId: ''
-          }));
+
+          const currentMemberships = state.universeMemberships || {};
+          const parentsWithAbsorptions = [...new Set(
+            Object.values(currentMemberships)
+              .map((parentId) => String(parentId || '').trim())
+              .filter(Boolean)
+          )];
+          if (!parentsWithAbsorptions.length) {
+            alert('No hay absorciones para disolver.');
+            return;
+          }
+
+          const availableUniverseNames = parentsWithAbsorptions
+            .map((parentId) => state.universeNodes.find((node) => node.id === parentId)?.name || '')
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+          if (!availableUniverseNames.length) {
+            alert('No se encontraron universos con absorciones activas.');
+            return;
+          }
+
+          const promptMessage = [
+            'Elige el universo para ejecutar la Explosión Big Bang:',
+            ...availableUniverseNames.map((name, idx) => `${idx + 1}. ${name}`)
+          ].join('\n');
+          const selection = window.prompt(promptMessage, availableUniverseNames[0] || '');
+          if (selection === null) return;
+
+          const normalizedSelection = normalizeUniverseName(selection);
+          const selectedByIndex = Number.parseInt(selection, 10);
+          const selectedUniverseName = Number.isInteger(selectedByIndex) && selectedByIndex >= 1 && selectedByIndex <= availableUniverseNames.length
+            ? availableUniverseNames[selectedByIndex - 1]
+            : availableUniverseNames.find((name) => normalizeUniverseName(name) === normalizedSelection);
+
+          if (!selectedUniverseName) {
+            alert('No se reconoció ese universo. Intenta de nuevo con el nombre o número de la lista.');
+            return;
+          }
+
+          const selectedUniverseNode = state.universeNodes.find(
+            (node) => normalizeUniverseName(node.name) === normalizeUniverseName(selectedUniverseName)
+          );
+          if (!selectedUniverseNode) {
+            alert('No se pudo encontrar el universo seleccionado.');
+            return;
+          }
+
+          let dissolutions = 0;
+          const nextMemberships = {};
+          Object.entries(currentMemberships).forEach(([childId, parentId]) => {
+            if (String(parentId || '') === selectedUniverseNode.id) {
+              dissolutions += 1;
+              return;
+            }
+            nextMemberships[childId] = parentId;
+          });
+
+          if (!dissolutions) {
+            alert(`"${selectedUniverseName}" no tiene absorciones activas.`);
+            return;
+          }
+
+          state.universeMemberships = nextMemberships;
+          state.universeNodes = (state.universeNodes || []).map((node) => {
+            const parentId = state.universeMemberships[node.id] || '';
+            return {
+              ...node,
+              kind: parentId ? 'world' : 'universe',
+              parentUniverseId: parentId
+            };
+          });
           state.mapAbsorptionEffect = null;
           saveUniverseMemberships();
           saveUniverseNodes();
