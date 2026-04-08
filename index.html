@@ -496,13 +496,13 @@
         drop-shadow(0 0 5px rgba(76, 205, 255, .95))
         drop-shadow(0 0 11px rgba(67, 166, 255, .95))
         drop-shadow(0 0 22px rgba(53, 136, 255, .68));
-      stroke-dasharray: 6 12;
-      animation: cometFlow 1.15s linear infinite;
       opacity: .94;
+      animation: connectorGlow 1.9s ease-in-out infinite alternate;
     }
 
-    @keyframes cometFlow {
-      to { stroke-dashoffset: -36; }
+    @keyframes connectorGlow {
+      from { opacity: .72; }
+      to { opacity: 1; }
     }
 
     .absorption-effect {
@@ -5400,6 +5400,8 @@
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
             const worldCenterX = safeX + 90;
             const worldCenterY = safeY + 65;
+            const baseDx = Math.round(worldCenterX - node.x);
+            const baseDy = Math.round(worldCenterY - node.y);
             const bendPull = Math.max(28, Math.min(92, orbitRadius * 0.22));
             const controlX = ((node.x + worldCenterX) / 2) + (Math.cos(angle) * bendPull);
             const controlY = ((node.y + worldCenterY) / 2) + (Math.sin(angle) * bendPull);
@@ -5420,6 +5422,8 @@
                 data-world-key="${entry.worldKey}"
                 data-parent-id="${node.id}"
                 data-base-angle="${angle.toFixed(4)}"
+                data-base-dx="${baseDx}"
+                data-base-dy="${baseDy}"
                 data-locked="${entry.unlocked ? '0' : '1'}"
                 style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;"
               >
@@ -5696,38 +5700,37 @@
         });
       };
 
-      const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle, stretch = 1) => {
+      const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle) => {
         if (!pathEl) return;
-        const safeStretch = Math.max(1, stretch || 1);
-        const bendPull = Math.max(30, Math.min(130, Math.hypot(endX - startX, endY - startY) * 0.22 * safeStretch));
+        const bendPull = Math.max(30, Math.min(130, Math.hypot(endX - startX, endY - startY) * 0.22));
         const controlX = ((startX + endX) / 2) + (Math.cos(angle) * bendPull);
         const controlY = ((startY + endY) / 2) + (Math.sin(angle) * bendPull);
         pathEl.setAttribute('d', `M ${Math.round(startX)} ${Math.round(startY)} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(endX)} ${Math.round(endY)}`);
       };
 
-      const updateExpandedWorldsForParent = (parentNodeId, dragMagnitude = 0) => {
+      const updateExpandedWorldsForParent = (parentNodeId) => {
         if (!parentNodeId || !state.expandedUniverses.has(parentNodeId)) return;
         const parentNode = state.universeNodes.find((item) => item.id === parentNodeId);
         if (!parentNode) return;
         const worldEls = [...viewMap.querySelectorAll(`.universe-node--world[data-parent-id="${parentNodeId}"]`)];
-        const stretch = 1 + Math.min(0.38, dragMagnitude / 380);
         worldEls.forEach((worldEl) => {
           const baseAngle = Number.parseFloat(worldEl.dataset.baseAngle || '0');
-          const worldRectX = Number.parseFloat(worldEl.style.left || '0');
-          const worldRectY = Number.parseFloat(worldEl.style.top || '0');
-          if (!Number.isFinite(baseAngle) || !Number.isFinite(worldRectX) || !Number.isFinite(worldRectY)) return;
-          const centerX = worldRectX + 90;
-          const centerY = worldRectY + 65;
-          const dx = centerX - parentNode.x;
-          const dy = centerY - parentNode.y;
-          const radius = Math.hypot(dx, dy) || 1;
-          const targetCenterX = parentNode.x + (Math.cos(baseAngle) * radius * stretch);
-          const targetCenterY = parentNode.y + (Math.sin(baseAngle) * radius * stretch);
+          const baseDx = Number.parseFloat(worldEl.dataset.baseDx || '');
+          const baseDy = Number.parseFloat(worldEl.dataset.baseDy || '');
+          if (!Number.isFinite(baseAngle)) return;
+          const fallbackWorldRectX = Number.parseFloat(worldEl.style.left || '0');
+          const fallbackWorldRectY = Number.parseFloat(worldEl.style.top || '0');
+          const dx = Number.isFinite(baseDx) ? baseDx : (fallbackWorldRectX + 90 - parentNode.x);
+          const dy = Number.isFinite(baseDy) ? baseDy : (fallbackWorldRectY + 65 - parentNode.y);
+          const targetCenterX = parentNode.x + dx;
+          const targetCenterY = parentNode.y + dy;
+          worldEl.dataset.baseDx = `${Math.round(dx)}`;
+          worldEl.dataset.baseDy = `${Math.round(dy)}`;
           worldEl.style.left = `${Math.round(targetCenterX - 90)}px`;
           worldEl.style.top = `${Math.round(targetCenterY - 65)}px`;
           const worldKey = worldEl.dataset.worldKey || '';
           const pathEl = viewMap.querySelector(`.map-link-path[data-parent-id="${parentNodeId}"][data-world-key="${worldKey}"]`);
-          updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle, stretch);
+          updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle);
         });
       };
 
@@ -5793,7 +5796,7 @@
           node.y = boundedY;
           nodeEl.style.left = `${boundedX - NODE_HALF_WIDTH}px`;
           nodeEl.style.top = `${boundedY - NODE_HALF_HEIGHT}px`;
-          updateExpandedWorldsForParent(node.id, Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY));
+          updateExpandedWorldsForParent(node.id);
           const movedDistance = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
           if (!dragState.moved && movedDistance >= DRAG_OPEN_THRESHOLD) {
             dragState.moved = true;
