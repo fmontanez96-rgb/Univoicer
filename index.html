@@ -592,14 +592,14 @@
 
     .universe-node--universe {
       --w: 230px;
-      --h: 292px;
+      --h: 232px;
       --orb-size: 164px;
       --title-size: 1.02rem;
     }
 
     .universe-node--world {
       --w: 180px;
-      --h: 230px;
+      --h: 190px;
       --orb-size: 126px;
       --title-size: 0.92rem;
       z-index: 4;
@@ -673,21 +673,12 @@
     }
 
     .universe-node h3 {
-      margin: 0 0 4px 0;
+      margin: 0;
       font-size: var(--title-size);
       color: #ffffff;
       letter-spacing: 1px;
       text-transform: uppercase;
       font-weight: 800;
-    }
-
-    .universe-node p {
-      margin: 0 0 8px 0;
-      font-size: 0.75rem;
-      color: #a2c8f2;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
     }
 
     .map-world-node {
@@ -5371,7 +5362,6 @@
             const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
             const safeY = Math.max(16, Math.min(state.mapCanvas.height - 230, worldY - 115));
             const safeWorldName = escapeHtml(entry.name);
-            const stats = entry.stats || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
             const worldCenterX = safeX + 90;
             const worldCenterY = safeY + 65;
@@ -5408,13 +5398,6 @@
                 </div>
                 <div class="node-info">
                   <h3>${safeWorldName}</h3>
-                  <p>${stats.completion}% PROGRESO</p>
-                  <span class="completion-badge completion-badge--${stats.state}">
-                    ${stats.state === 'complete' ? 'COMPLETO' : stats.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
-                  </span>
-                  <span class="completion-track" aria-hidden="true">
-                    <span class="completion-fill completion-fill--${stats.state}" style="width:${stats.completion}%;"></span>
-                  </span>
                 </div>
               </button>
             `);
@@ -5430,13 +5413,6 @@
             </div>
             <div class="node-info">
               <h3>${safeName}</h3>
-              <p>${universeData.completion}% PROGRESO</p>
-              <span class="completion-badge completion-badge--${universeData.state}">
-                ${universeData.state === 'complete' ? 'COMPLETO' : universeData.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
-              </span>
-              <span class="completion-track" aria-hidden="true">
-                <span class="completion-fill completion-fill--${universeData.state}" style="width:${universeData.completion}%;"></span>
-              </span>
             </div>
           </button>
         `;
