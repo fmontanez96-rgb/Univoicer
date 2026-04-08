@@ -5342,25 +5342,6 @@
       saveUniverseNodes();
     }
 
-    function getCharacterWorldEntries(universeName) {
-      const normalizedUniverse = normalizeUniverseName(universeName);
-      const byCharacter = new Map();
-      VIDEOS.forEach((video) => {
-        const universes = getVideoUniverses(video);
-        const belongs = universes.some((name) => normalizeUniverseName(name) === normalizedUniverse);
-        if (!belongs) return;
-        const characterName = String(video.personaje || '').trim();
-        if (!characterName) return;
-        const characterKey = normalizeName(characterName);
-        if (!characterKey) return;
-        if (!byCharacter.has(characterKey)) {
-          byCharacter.set(characterKey, { name: characterName, unlocked: false });
-        }
-        if (hasGreetingVideo(video)) byCharacter.get(characterKey).unlocked = true;
-      });
-      return [...byCharacter.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
-    }
-
     function getUniverseChildWorldEntries(universeName) {
       const parentNode = state.universeNodes.find((node) => normalizeUniverseName(node.name) === normalizeUniverseName(universeName));
       if (!parentNode) return [];
@@ -5390,10 +5371,7 @@
     }
 
     function getUniverseWorldEntries(universeName) {
-      return {
-        characterWorldEntries: getCharacterWorldEntries(universeName),
-        universeChildWorldEntries: getUniverseChildWorldEntries(universeName)
-      };
+      return getUniverseChildWorldEntries(universeName);
     }
 
     function renderMapView() {
@@ -5417,11 +5395,8 @@
         const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const isExpanded = state.expandedUniverses.has(node.id);
         if (isExpanded) {
-          const { characterWorldEntries, universeChildWorldEntries } = getUniverseWorldEntries(node.name);
-          const entries = [
-            ...characterWorldEntries.map((entry) => ({ ...entry, type: 'character', worldKey: `character:${normalizeUniverseName(entry.name)}` })),
-            ...universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }))
-          ];
+          const entries = getUniverseWorldEntries(node.name)
+            .map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }));
           const baseRadius = 190;
           const minArc = 155;
           const dynamicRadius = Math.max(baseRadius, Math.ceil((entries.length * minArc) / (Math.PI * 2)));
@@ -5476,7 +5451,7 @@
                 </div>
                 <div class="node-info">
                   <h3>${safeWorldName}</h3>
-                  <p>${stats.unlockedCharacters}/${stats.totalCharacters} PERSONAJES</p>
+                  <p>${stats.completion}% PROGRESO</p>
                   <span class="completion-badge completion-badge--${stats.state}">
                     ${stats.state === 'complete' ? 'COMPLETO' : stats.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
                   </span>
@@ -5517,7 +5492,7 @@
             </div>
             <div class="node-info">
               <h3>${safeName}</h3>
-              <p>${universeData.unlockedCharacters}/${universeData.totalCharacters} PERSONAJES</p>
+              <p>${universeData.completion}% PROGRESO</p>
               <span class="completion-badge completion-badge--${universeData.state}">
                 ${universeData.state === 'complete' ? 'COMPLETO' : universeData.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
               </span>
@@ -5962,16 +5937,11 @@
           event.stopPropagation();
           const worldName = worldEl.dataset.worldName;
           if (!worldName) return;
-          const worldType = worldEl.dataset.worldType || 'character';
-          if (worldType === 'universe-child') {
-            state.universe = worldName;
-            state.selectedVideoId = null;
-            state.showAddForm = false;
-            state.showEditUniverseForm = false;
-            changeView('universe');
-            return;
-          }
-          openCharacterProfile(worldName);
+          state.universe = worldName;
+          state.selectedVideoId = null;
+          state.showAddForm = false;
+          state.showEditUniverseForm = false;
+          changeView('universe');
         });
       });
 
