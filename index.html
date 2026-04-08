@@ -502,12 +502,15 @@
     }
 
     .map-link-path--secondary {
-      stroke: rgba(255, 64, 64, .72);
-      stroke-width: 0.85;
-      stroke-dasharray: none;
-      filter: drop-shadow(0 0 2px rgba(255, 68, 68, .45));
-      opacity: .5;
-      animation: none;
+      stroke: rgba(255, 56, 56, .96);
+      stroke-width: 2.1;
+      stroke-dasharray: 9 7;
+      filter:
+        drop-shadow(0 0 5px rgba(255, 78, 78, .95))
+        drop-shadow(0 0 12px rgba(255, 64, 64, .85))
+        drop-shadow(0 0 20px rgba(255, 24, 24, .68));
+      opacity: .98;
+      animation: connectorGlow 1.2s ease-in-out infinite alternate, connectorFlow 1.8s linear infinite;
     }
 
     @keyframes connectorGlow {
@@ -6333,6 +6336,9 @@
       const linkedUniverseNames = getParentUniverseIdsForNode(universeNode)
         .map((parentId) => state.universeNodes.find((node) => node.id === parentId)?.name || '')
         .filter(Boolean);
+      const parentUniverseOptions = state.universeNodes
+        .filter((node) => node.id !== universeNode?.id && String(node.kind || 'universe') === 'universe')
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }));
       const headerCover = getSafeUniverseCover(state.universe, universeNode?.cover || getUniverseCover(videos));
       const progressVisual = getProgressVisual(universeData.completion);
       const editFeedbackText = state.editUniverseFeedback?.text || '';
@@ -6397,13 +6403,17 @@
                     placeholder="Ej. Dragon Ball"
                   >
                 </label>
-                <label>Universos vinculados (separados por coma)
-                  <input
-                    type="text"
-                    name="universosLigados"
-                    value="${escapeHtml(linkedUniverseNames.join(', '))}"
-                    placeholder="Ej. Universo B, Universo C, Universo D"
-                  >
+                <label>Universos padre vinculados
+                  <select name="universosLigados" multiple size="${Math.max(3, Math.min(8, parentUniverseOptions.length || 3))}">
+                    ${parentUniverseOptions.length
+                      ? parentUniverseOptions.map((node) => `
+                        <option value="${escapeHtml(node.name || '')}" ${linkedUniverseNames.some((name) => normalizeUniverseName(name) === normalizeUniverseName(node.name)) ? 'selected' : ''}>
+                          ${escapeHtml(node.name || '')}
+                        </option>
+                      `).join('')
+                      : '<option value="" disabled>No hay universos padre disponibles</option>'}
+                  </select>
+                  <span class="muted">Solo se muestran universos padre. Mantén Ctrl/Cmd para seleccionar varios.</span>
                 </label>
                 <label>Portada</label>
                 <div class="cover-mode" role="group" aria-label="Selector de portada de edición">
@@ -6565,7 +6575,12 @@
         event.preventDefault();
         const formData = new FormData(editUniverseForm);
         const cleanName = String(formData.get('nombreUniverso') || '').trim();
-        const linkedUniversesRaw = String(formData.get('universosLigados') || '');
+        const linkedUniverseNames = [...new Set(
+          formData
+            .getAll('universosLigados')
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+        )];
         if (!cleanName) {
           state.editUniverseFeedback = { type: 'error', text: 'El nombre del universo es obligatorio.' };
           renderUniverseView();
@@ -6604,15 +6619,13 @@
         if (universeNode) {
           universeNode.name = cleanName;
           universeNode.cover = nextCover || '';
-          const linkedUniverseNames = [...new Set(
-            linkedUniversesRaw
-              .split(',')
-              .map((item) => String(item || '').trim())
-              .filter(Boolean)
-          )];
           if (linkedUniverseNames.length) {
             const parentUniverseIds = linkedUniverseNames
-              .map((linkedName) => ensureUniverseNodeByName(linkedName))
+              .map((linkedName) => state.universeNodes.find((node) =>
+                node.id !== universeNode.id
+                && String(node.kind || 'universe') === 'universe'
+                && normalizeUniverseName(node.name) === normalizeUniverseName(linkedName)
+              ))
               .filter(Boolean)
               .map((node) => node.id)
               .filter((parentId) => parentId !== universeNode.id);
