@@ -4068,7 +4068,8 @@
       showCharacterInlineDelete: false,
       expandedUniverses: new Set(),
       mapWorldFilter: 'universe',
-      mapAbsorptionEffect: null
+      mapAbsorptionEffect: null,
+      mapGeneratedWorldBounds: []
     };
     const UNIVERSES_STORAGE_KEY = 'universes_map_v1';
     const VIDEOS_STORAGE_KEY = 'videos_collection_v1';
@@ -4080,6 +4081,13 @@
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
     const NODE_HALF_WIDTH = 110;
     const NODE_HALF_HEIGHT = 93;
+    const WORLD_NODE_WIDTH = 180;
+    const WORLD_NODE_HEIGHT = 130;
+    const WORLD_NODE_HALF_WIDTH = WORLD_NODE_WIDTH / 2;
+    const WORLD_NODE_HALF_HEIGHT = WORLD_NODE_HEIGHT / 2;
+    const WORLD_NODE_DIAMETER = 130;
+    const WORLD_NODE_GAP = 36;
+    const WORLD_MIN_SPACING = WORLD_NODE_DIAMETER + WORLD_NODE_GAP;
     let firebaseDb = null;
     let cloudSyncTimer = null;
     let collectionModel = {
@@ -5200,10 +5208,29 @@
       }
       const xs = state.universeNodes.map(node => node.x);
       const ys = state.universeNodes.map(node => node.y);
-      const maxX = Math.max(...xs) + NODE_HALF_WIDTH + padding;
-      const maxY = Math.max(...ys) + NODE_HALF_HEIGHT + padding;
-      state.mapCanvas.width = Math.max(minWidth, maxX);
-      state.mapCanvas.height = Math.max(minHeight, maxY);
+      const baseMaxX = Math.max(...xs) + NODE_HALF_WIDTH + padding;
+      const baseMaxY = Math.max(...ys) + NODE_HALF_HEIGHT + padding;
+      let targetWidth = Math.max(minWidth, baseMaxX);
+      let targetHeight = Math.max(minHeight, baseMaxY);
+      const predictedWorldBounds = [];
+      state.universeNodes.forEach((node) => {
+        if (!state.expandedUniverses.has(node.id)) return;
+        const { characterWorldEntries, universeChildWorldEntries } = getUniverseWorldEntries(node.name);
+        const entries = [
+          ...characterWorldEntries.map((entry) => ({ ...entry, type: 'character', worldKey: `character:${normalizeUniverseName(entry.name)}` })),
+          ...universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }))
+        ];
+        const layouts = calculateExpandedWorldLayout(node, entries, { width: targetWidth, height: targetHeight });
+        layouts.forEach((layout) => predictedWorldBounds.push(layout));
+      });
+      if (predictedWorldBounds.length) {
+        const contentMaxX = Math.max(...predictedWorldBounds.map((item) => item.box.maxX)) + padding;
+        const contentMaxY = Math.max(...predictedWorldBounds.map((item) => item.box.maxY)) + padding;
+        targetWidth = Math.max(targetWidth, contentMaxX);
+        targetHeight = Math.max(targetHeight, contentMaxY);
+      }
+      state.mapCanvas.width = targetWidth;
+      state.mapCanvas.height = targetHeight;
     }
 
     function ensureUniverseNodes() {
@@ -5351,11 +5378,87 @@
       };
     }
 
+    function calculateExpandedWorldLayout(parentNode, entries, canvasSize = state.mapCanvas) {
+      if (!parentNode || !Array.isArray(entries) || !entries.length) return [];
+      const canvasWidth = Math.max(1, Number(canvasSize?.width) || state.mapCanvas.width || 1);
+      const canvasHeight = Math.max(1, Number(canvasSize?.height) || state.mapCanvas.height || 1);
+      const minimumRadius = 200;
+      const estimatedCapacityAtMinimum = Math.max(1, Math.floor((Math.PI * 2 * minimumRadius) / WORLD_MIN_SPACING));
+      const estimatedRingCount = Math.max(1, Math.ceil(entries.length / estimatedCapacityAtMinimum));
+      const furthestRingRadius = minimumRadius + ((estimatedRingCount - 1) * WORLD_MIN_SPACING);
+      const neededPaddingX = furthestRingRadius + WORLD_NODE_HALF_WIDTH + 28;
+      const neededPaddingY = furthestRingRadius + WORLD_NODE_HALF_HEIGHT + 28;
+      const virtualCenterX = canvasWidth <= neededPaddingX * 2
+        ? canvasWidth / 2
+        : Math.max(neededPaddingX, Math.min(canvasWidth - neededPaddingX, parentNode.x));
+      const virtualCenterY = canvasHeight <= neededPaddingY * 2
+        ? canvasHeight / 2
+        : Math.max(neededPaddingY, Math.min(canvasHeight - neededPaddingY, parentNode.y));
+
+      const layouts = [];
+      let consumed = 0;
+      let ringIndex = 0;
+      while (consumed < entries.length) {
+        const ringRadius = minimumRadius + (ringIndex * WORLD_MIN_SPACING);
+        const ringCapacity = Math.max(1, Math.floor((Math.PI * 2 * ringRadius) / WORLD_MIN_SPACING));
+        const pointsInRing = Math.min(ringCapacity, entries.length - consumed);
+        const angleOffset = (ringIndex % 2) * (Math.PI / Math.max(3, pointsInRing));
+        for (let indexInRing = 0; indexInRing < pointsInRing; indexInRing += 1) {
+          const entryIndex = consumed + indexInRing;
+          const angle = angleOffset + ((Math.PI * 2 * indexInRing) / pointsInRing);
+          const centerX = Math.round(virtualCenterX + (Math.cos(angle) * ringRadius));
+          const centerY = Math.round(virtualCenterY + (Math.sin(angle) * ringRadius));
+          const x = Math.round(centerX - WORLD_NODE_HALF_WIDTH);
+          const y = Math.round(centerY - WORLD_NODE_HALF_HEIGHT);
+          layouts.push({
+            entry: entries[entryIndex],
+            angle,
+            ringIndex,
+            centerX,
+            centerY,
+            x,
+            y,
+            box: {
+              minX: x,
+              maxX: x + WORLD_NODE_WIDTH,
+              minY: y,
+              maxY: y + WORLD_NODE_HEIGHT
+            }
+          });
+        }
+        consumed += pointsInRing;
+        ringIndex += 1;
+      }
+      return layouts;
+    }
+
+    function getMapContentBounds() {
+      const universeBounds = getUniverseBounds();
+      const worldBounds = Array.isArray(state.mapGeneratedWorldBounds) ? state.mapGeneratedWorldBounds : [];
+      if (!universeBounds && !worldBounds.length) return null;
+      if (!worldBounds.length) return universeBounds;
+      const worldMinX = Math.min(...worldBounds.map((item) => item.box.minX));
+      const worldMaxX = Math.max(...worldBounds.map((item) => item.box.maxX));
+      const worldMinY = Math.min(...worldBounds.map((item) => item.box.minY));
+      const worldMaxY = Math.max(...worldBounds.map((item) => item.box.maxY));
+      if (!universeBounds) {
+        return { minX: worldMinX, maxX: worldMaxX, minY: worldMinY, maxY: worldMaxY };
+      }
+      return {
+        minX: Math.min(universeBounds.minX, worldMinX),
+        maxX: Math.max(universeBounds.maxX, worldMaxX),
+        minY: Math.min(universeBounds.minY, worldMinY),
+        maxY: Math.max(universeBounds.maxY, worldMaxY)
+      };
+    }
+
     function renderMapView() {
       const universes = groupByUniverse();
       ensureUniverseNodes();
       const worldNodes = [];
       const worldLinks = [];
+      const connectorNodes = [];
+      const generatedWorldBounds = [];
       const childUniverseIds = new Set(Object.keys(state.universeMemberships || {}));
       const rootUniverseNodes = state.universeNodes.filter(node => !childUniverseIds.has(node.id));
       const absorptionEffect = state.mapAbsorptionEffect;
@@ -5377,24 +5480,15 @@
             ...characterWorldEntries.map((entry) => ({ ...entry, type: 'character', worldKey: `character:${normalizeUniverseName(entry.name)}` })),
             ...universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }))
           ];
-          const baseRadius = 190;
-          const minArc = 155;
-          const dynamicRadius = Math.max(baseRadius, Math.ceil((entries.length * minArc) / (Math.PI * 2)));
-          const ringCapacity = Math.max(1, Math.floor((Math.PI * 2 * dynamicRadius) / minArc));
-          entries.forEach((entry, index) => {
-            const ringIndex = Math.floor(index / ringCapacity);
-            const indexInRing = index % ringCapacity;
-            const ringCount = Math.max(1, Math.ceil(entries.length / ringCapacity));
-            const pointsInRing = ringIndex === ringCount - 1
-              ? (entries.length - (ringIndex * ringCapacity)) || ringCapacity
-              : ringCapacity;
-            const angleOffset = (ringIndex % 2) * (Math.PI / Math.max(4, pointsInRing));
-            const angle = angleOffset + (Math.PI * 2 * indexInRing) / Math.max(1, pointsInRing);
-            const orbitRadius = dynamicRadius + (ringIndex * 165);
-            const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
-            const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
-            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
-            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 230, worldY - 115));
+          const layouts = calculateExpandedWorldLayout(node, entries, state.mapCanvas);
+          layouts.forEach((layout, index) => {
+            const { entry, angle, centerX: worldCenterX, centerY: worldCenterY, x, y, box } = layout;
+            generatedWorldBounds.push({
+              parentId: node.id,
+              worldKey: entry.worldKey,
+              center: { x: worldCenterX, y: worldCenterY },
+              box
+            });
             const safeWorldName = escapeHtml(entry.name);
             const stats = entry.stats || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
@@ -5425,7 +5519,7 @@
                 data-base-dx="${baseDx}"
                 data-base-dy="${baseDy}"
                 data-locked="${entry.unlocked ? '0' : '1'}"
-                style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;"
+                style="left:${x}px; top:${y}px; --float-delay:-${floatDelay}s;"
               >
                 <div class="orb-container">
                   <img class="universe-cover" src="${getSafeUniverseCover(entry.name, entry.cover)}" alt="Portada de ${safeWorldName}" loading="lazy">
@@ -5466,6 +5560,7 @@
           </button>
         `;
       }).join('');
+      state.mapGeneratedWorldBounds = generatedWorldBounds;
       viewMap.innerHTML = `
         <div class="universe-map-shell">
           <div class="map-toolbar">
@@ -5539,7 +5634,7 @@
         mapCanvas.style.height = `${state.mapCanvas.height}px`;
         mapWorld.style.width = `${state.mapCanvas.width}px`;
         mapWorld.style.height = `${state.mapCanvas.height}px`;
-        const bounds = getUniverseBounds();
+        const bounds = getMapContentBounds();
         if (!bounds) {
           applyMapScale(1, {
             x: state.mapCanvas.width / 2,
@@ -5553,7 +5648,10 @@
         const spanWidth = Math.max(1, bounds.maxX - bounds.minX);
         const spanHeight = Math.max(1, bounds.maxY - bounds.minY);
         const scale = Math.min(1, availableWidth / spanWidth, availableHeight / spanHeight);
-        const centroid = getUniverseCentroid();
+        const centroid = {
+          x: (bounds.minX + bounds.maxX) / 2,
+          y: (bounds.minY + bounds.maxY) / 2
+        };
         applyMapScale(scale, centroid);
       };
       syncMapCanvasSize();
