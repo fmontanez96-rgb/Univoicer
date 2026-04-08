@@ -552,6 +552,16 @@
       z-index: 10; /* Lo trae al frente al hacer hover */
     }
 
+    .universe-node.is-dragging {
+      z-index: 12;
+    }
+
+    .universe-node.is-drop-target .orb-container {
+      border-color: #7effa6;
+      box-shadow: 0 0 38px rgba(126, 255, 166, 0.95), inset 0 0 26px rgba(126, 255, 166, 0.45);
+      transform: scale(1.05);
+    }
+
     /* El Orbe Circular con efecto Neón */
     .universe-node .orb-container {
       width: 130px;
@@ -627,24 +637,34 @@
       letter-spacing: 0.05em;
     }
 
-    .node-expand-toggle {
-      margin-top: 8px;
+    .map-world-node {
+      position: absolute;
+      border: 1px solid rgba(118, 188, 255, 0.55);
+      background: rgba(9, 21, 44, 0.9);
+      color: #d9ecff;
       border-radius: 999px;
-      border: 1px solid rgba(136, 214, 255, .65);
-      background: rgba(8, 20, 43, .92);
-      color: #e5f8ff;
-      font-weight: 800;
-      font-size: .7rem;
-      letter-spacing: .07em;
-      padding: 5px 10px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      line-height: 1;
       cursor: pointer;
-      pointer-events: auto;
-      transition: transform .2s ease, box-shadow .2s ease;
+      z-index: 3;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 0 14px rgba(47, 146, 255, 0.3);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
     }
 
-    .node-expand-toggle:hover {
+    .map-world-node:hover {
       transform: translateY(-1px);
-      box-shadow: 0 0 14px rgba(114, 226, 255, .36);
+      border-color: rgba(189, 224, 255, 0.95);
+      box-shadow: 0 0 18px rgba(88, 180, 255, 0.45);
+    }
+
+    .map-world-node[data-locked="1"] {
+      opacity: 0.72;
+      border-style: dashed;
     }
 
     .map-popup {
@@ -3966,7 +3986,7 @@
         shuffleEnabled: false
       },
       universeNodes: [],
-      mapExpandedUniverseIds: [],
+      universeMemberships: {},
       mapCanvas: { width: 1400, height: 900 },
       mapViewport: { scale: 1, centroidX: 0, centroidY: 0 },
       blockedCharactersByActor: {},
@@ -3981,12 +4001,16 @@
       indicePreviewCharacter: '',
       indicePreviewAnchor: null,
       showCharacterInlineEdit: false,
-      showCharacterInlineDelete: false
+      showCharacterInlineDelete: false,
+      expandedUniverses: new Set(),
+      lastClickedUniverse: '',
+      lastClickedUniverseAt: 0
     };
     const UNIVERSES_STORAGE_KEY = 'universes_map_v1';
     const VIDEOS_STORAGE_KEY = 'videos_collection_v1';
     const COLLECTION_MODEL_STORAGE_KEY = 'collection_model_v1';
     const BLOCKED_CHARACTERS_STORAGE_KEY = 'blocked_characters_by_actor_v1';
+    const UNIVERSE_MEMBERSHIPS_STORAGE_KEY = 'universe_memberships_v1';
     const CLOUD_STORAGE_PATH = 'univoicerData/main';
     const SPECIAL_UNASSIGNED_UNIVERSE = 'Sin universo';
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -4136,7 +4160,8 @@
         actors: [],
         characters: [],
         universes: [],
-        videos: []
+        videos: [],
+        worldMemberships: []
       };
     }
 
@@ -4145,6 +4170,12 @@
       if (!Array.isArray(rawModel.actors) || !Array.isArray(rawModel.characters) || !Array.isArray(rawModel.universes) || !Array.isArray(rawModel.videos)) {
         return null;
       }
+      const rawUniverseIds = new Set(
+        rawModel.universes
+          .filter(Boolean)
+          .map(item => String(item.id || ''))
+          .filter(Boolean)
+      );
       return {
         actors: rawModel.actors.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -4162,7 +4193,9 @@
         universes: rawModel.universes.filter(Boolean).map(item => ({
           id: String(item.id || ''),
           name: String(item.name || 'Sin universo'),
-          characterIds: Array.isArray(item.characterIds) ? [...new Set(item.characterIds.filter(Boolean).map(String))] : []
+          characterIds: Array.isArray(item.characterIds) ? [...new Set(item.characterIds.filter(Boolean).map(String))] : [],
+          kind: item.kind === 'world' ? 'world' : 'universe',
+          parentUniverseIds: Array.isArray(item.parentUniverseIds) ? [...new Set(item.parentUniverseIds.filter(Boolean).map(String))] : []
         })),
         videos: rawModel.videos.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -4172,7 +4205,17 @@
           characterId: String(item.characterId || ''),
           actorId: String(item.actorId || ''),
           universeIds: Array.isArray(item.universeIds) ? [...new Set(item.universeIds.filter(Boolean).map(String))] : []
-        }))
+        })),
+        worldMemberships: Array.isArray(rawModel.worldMemberships)
+          ? rawModel.worldMemberships
+            .filter(Boolean)
+            .map(item => ({
+              worldUniverseId: String(item.worldUniverseId || ''),
+              parentUniverseId: String(item.parentUniverseId || '')
+            }))
+            .filter(item => item.worldUniverseId && item.parentUniverseId)
+            .filter(item => rawUniverseIds.has(item.worldUniverseId) && rawUniverseIds.has(item.parentUniverseId))
+          : []
       };
     }
 
@@ -4213,7 +4256,13 @@
     function getOrCreateUniverse(model, universeName, universeMap) {
       const normalized = normalizeEntityName(universeName || 'Sin universo');
       if (universeMap.has(normalized)) return universeMap.get(normalized);
-      const universe = { id: createModelId('universe', normalized), name: (universeName || 'Sin universo').trim() || 'Sin universo', characterIds: [] };
+      const universe = {
+        id: createModelId('universe', normalized),
+        name: (universeName || 'Sin universo').trim() || 'Sin universo',
+        characterIds: [],
+        kind: 'universe',
+        parentUniverseIds: []
+      };
       model.universes.push(universe);
       universeMap.set(normalized, universe);
       return universe;
@@ -4295,9 +4344,20 @@
         })),
         universes: baseModel.universes.map((universe) => ({
           ...universe,
-          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : []
+          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : [],
+          kind: universe.kind === 'world' ? 'world' : 'universe',
+          parentUniverseIds: Array.isArray(universe.parentUniverseIds) ? [...new Set(universe.parentUniverseIds)] : []
         })),
-        videos: []
+        videos: [],
+        worldMemberships: Array.isArray(baseModel.worldMemberships)
+          ? baseModel.worldMemberships
+            .filter(Boolean)
+            .map((item) => ({
+              worldUniverseId: String(item.worldUniverseId || ''),
+              parentUniverseId: String(item.parentUniverseId || '')
+            }))
+            .filter((item) => item.worldUniverseId && item.parentUniverseId)
+          : []
       };
 
       const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
@@ -4466,6 +4526,37 @@
     function saveUniverseNodes() {
       localStorage.setItem(UNIVERSES_STORAGE_KEY, JSON.stringify(state.universeNodes));
       scheduleCloudSync();
+    }
+
+    function normalizeUniverseMemberships(memberships, nodes = state.universeNodes) {
+      const validNodeIds = new Set((Array.isArray(nodes) ? nodes : []).map((node) => String(node.id || '').trim()).filter(Boolean));
+      if (!memberships || typeof memberships !== 'object') return {};
+      return Object.entries(memberships).reduce((acc, [worldId, parentUniverseId]) => {
+        const childId = String(worldId || '').trim();
+        const parentId = String(parentUniverseId || '').trim();
+        if (!childId || !parentId) return acc;
+        if (childId === parentId) return acc;
+        if (!validNodeIds.has(childId) || !validNodeIds.has(parentId)) return acc;
+        acc[childId] = parentId;
+        return acc;
+      }, {});
+    }
+
+    function saveUniverseMemberships() {
+      state.universeMemberships = normalizeUniverseMemberships(state.universeMemberships);
+      localStorage.setItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY, JSON.stringify(state.universeMemberships));
+      scheduleCloudSync();
+    }
+
+    function loadUniverseMembershipsFromStorage() {
+      try {
+        const raw = localStorage.getItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return normalizeUniverseMemberships(parsed);
+      } catch (_) {
+        return {};
+      }
     }
 
     function saveBlockedCharacters() {
@@ -4690,6 +4781,13 @@
       }
     }
 
+    function sanitizeUniverseMembershipsAndPersist() {
+      const sanitizedMemberships = normalizeUniverseMemberships(state.universeMemberships);
+      const changed = JSON.stringify(sanitizedMemberships) !== JSON.stringify(state.universeMemberships || {});
+      state.universeMemberships = sanitizedMemberships;
+      if (changed) saveUniverseMemberships();
+    }
+
     function saveVideos() {
       localStorage.setItem(VIDEOS_STORAGE_KEY, JSON.stringify(VIDEOS));
       collectionModel = mergeModelWithLegacyVideos(collectionModel, VIDEOS);
@@ -4744,6 +4842,10 @@
         if (Array.isArray(data.universeNodes)) {
           state.universeNodes = mergeUniverseNodes(state.universeNodes, data.universeNodes);
           localStorage.setItem(UNIVERSES_STORAGE_KEY, JSON.stringify(state.universeNodes));
+        }
+        if (data.universeMemberships && typeof data.universeMemberships === 'object') {
+          state.universeMemberships = normalizeUniverseMemberships(data.universeMemberships);
+          localStorage.setItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY, JSON.stringify(state.universeMemberships));
         }
         if (Array.isArray(data.videos)) {
           VIDEOS.splice(0, VIDEOS.length, ...data.videos.filter(video => video && typeof video === 'object'));
@@ -4807,6 +4909,7 @@
           await firebaseDb.ref(CLOUD_STORAGE_PATH).set({
             updatedAt: Date.now(),
             universeNodes: state.universeNodes,
+            universeMemberships: state.universeMemberships,
             videos: VIDEOS,
             collectionModel,
             blockedCharactersByActor: state.blockedCharactersByActor
@@ -5086,110 +5189,52 @@
           node.cover = getSafeUniverseCover(node.name, '');
         }
       });
+      sanitizeUniverseMembershipsAndPersist();
       saveUniverseNodes();
+    }
+
+    function getUniverseWorldEntries(universeName) {
+      const normalizedUniverse = normalizeUniverseName(universeName);
+      const byCharacter = new Map();
+      VIDEOS.forEach((video) => {
+        const universes = getVideoUniverses(video);
+        const belongs = universes.some((name) => normalizeUniverseName(name) === normalizedUniverse);
+        if (!belongs) return;
+        const characterName = String(video.personaje || '').trim();
+        if (!characterName) return;
+        const characterKey = normalizeName(characterName);
+        if (!characterKey) return;
+        if (!byCharacter.has(characterKey)) {
+          byCharacter.set(characterKey, { name: characterName, unlocked: false });
+        }
+        if (hasGreetingVideo(video)) byCharacter.get(characterKey).unlocked = true;
+      });
+      return [...byCharacter.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
     }
 
     function renderMapView() {
       const universes = groupByUniverse();
       ensureUniverseNodes();
-
-      const inboundById = new Map();
-      state.universeNodes.forEach((node) => {
-        (node.neighbors || []).forEach((neighborId) => {
-          inboundById.set(neighborId, (inboundById.get(neighborId) || 0) + 1);
-        });
-      });
-      const rootUniverseNodes = state.universeNodes.filter(node => (inboundById.get(node.id) || 0) === 0);
-      const visibleUniverseNodes = rootUniverseNodes.length ? rootUniverseNodes : state.universeNodes;
-      const visibleUniverseIds = new Set(visibleUniverseNodes.map(node => node.id));
-      const universeNodeByKey = new Map(visibleUniverseNodes.map(node => [normalizeUniverseName(node.name), node]));
-      state.mapExpandedUniverseIds = (state.mapExpandedUniverseIds || []).filter(id => visibleUniverseIds.has(id));
-      const expandedUniverseIds = new Set(state.mapExpandedUniverseIds || []);
-
-      const characterUniverseLinks = new Map();
-      collectionModel.videos.forEach((video) => {
-        const characterName = String(video.personaje || '').trim();
-        if (!characterName) return;
-        const charKey = normalizeName(characterName);
-        if (!charKey) return;
-        const universeNames = getVideoUniverses(video)
-          .map(name => normalizeUniverseName(name))
-          .filter(Boolean);
-        if (!universeNames.length) return;
-        if (!characterUniverseLinks.has(charKey)) {
-          characterUniverseLinks.set(charKey, {
-            key: charKey,
-            name: characterName,
-            universeKeys: new Set()
+      const worldNodes = [];
+      const nodesMarkup = state.universeNodes.map(node => {
+        const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
+        const isExpanded = state.expandedUniverses.has(node.id);
+        if (isExpanded) {
+          const entries = getUniverseWorldEntries(node.name).slice(0, 12);
+          const orbitRadius = 170;
+          entries.forEach((entry, index) => {
+            const angle = (Math.PI * 2 * index) / Math.max(1, entries.length);
+            const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
+            const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
+            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 196, worldX - 90));
+            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 40, worldY - 16));
+            worldNodes.push(`
+              <button class="map-world-node" data-world-name="${escapeHtml(entry.name)}" data-locked="${entry.unlocked ? '0' : '1'}" style="left:${safeX}px; top:${safeY}px;">
+                ${escapeHtml(entry.name)}
+              </button>
+            `);
           });
         }
-        const record = characterUniverseLinks.get(charKey);
-        universeNames.forEach((universeKey) => record.universeKeys.add(universeKey));
-      });
-
-      const worldNodes = [];
-      const mapLinks = [];
-      const WORLD_HALF_W = 62;
-      const WORLD_HALF_H = 27;
-      const clampToCanvas = (x, y) => ({
-        x: Math.max(WORLD_HALF_W + 6, Math.min(Math.round(x), state.mapCanvas.width - WORLD_HALF_W - 6)),
-        y: Math.max(WORLD_HALF_H + 6, Math.min(Math.round(y), state.mapCanvas.height - WORLD_HALF_H - 6))
-      });
-
-      visibleUniverseNodes.forEach((parentNode) => {
-        if (!expandedUniverseIds.has(parentNode.id)) return;
-        const parentKey = normalizeUniverseName(parentNode.name);
-        const worldsInUniverse = [];
-        characterUniverseLinks.forEach((characterRecord) => {
-          if (characterRecord.universeKeys.has(parentKey)) worldsInUniverse.push(characterRecord);
-        });
-        worldsInUniverse.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
-
-        const total = worldsInUniverse.length;
-        worldsInUniverse.forEach((characterRecord, index) => {
-          const seed = Math.abs(hashCode(`${parentNode.id}:${characterRecord.key}`));
-          const angleStep = total > 0 ? (Math.PI * 2) / total : 0;
-          const baseAngle = (angleStep * index) + ((seed % 60) - 30) * (Math.PI / 180);
-          const radius = 185 + (seed % 90);
-          const jitter = ((seed % 24) - 12);
-          const point = clampToCanvas(
-            parentNode.x + (Math.cos(baseAngle) * radius) + jitter,
-            parentNode.y + (Math.sin(baseAngle) * radius) - jitter
-          );
-          const worldId = `${parentNode.id}::${characterRecord.key}`;
-          worldNodes.push({
-            id: worldId,
-            name: characterRecord.name,
-            x: point.x,
-            y: point.y
-          });
-          mapLinks.push({
-            id: `link-${parentNode.id}-${worldId}`,
-            fromX: parentNode.x,
-            fromY: parentNode.y,
-            toX: point.x,
-            toY: point.y,
-            className: 'map-link'
-          });
-
-          characterRecord.universeKeys.forEach((linkedUniverseKey) => {
-            if (linkedUniverseKey === parentKey) return;
-            const linkedUniverse = universeNodeByKey.get(linkedUniverseKey);
-            if (!linkedUniverse) return;
-            mapLinks.push({
-              id: `cross-${worldId}-${linkedUniverse.id}`,
-              fromX: point.x,
-              fromY: point.y,
-              toX: linkedUniverse.x,
-              toY: linkedUniverse.y,
-              className: 'map-link map-link--cross'
-            });
-          });
-        });
-      });
-
-      const nodesMarkup = visibleUniverseNodes.map(node => {
-        const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const floatDelay = ((Math.abs(hashCode(node.id)) % 24) / 10).toFixed(1);
         const safeName = escapeHtml(node.name);
         const isExpanded = expandedUniverseIds.has(node.id);
@@ -5227,8 +5272,7 @@
             <div class="map-nebula-layer" aria-hidden="true"></div>
             <div class="map-stars-layer" aria-hidden="true"></div>
             <div class="map-world" id="mapWorld">
-              <svg class="map-links" aria-hidden="true" viewBox="0 0 ${state.mapCanvas.width} ${state.mapCanvas.height}" preserveAspectRatio="none">${linksMarkup}</svg>
-              ${worldsMarkup}
+              ${worldNodes.join('')}
               ${nodesMarkup}
             </div>
           </div>
@@ -5412,6 +5456,7 @@
 
       const dragState = {
         activeNodeId: '',
+        targetNodeId: '',
         pointerId: null,
         offsetX: 0,
         offsetY: 0,
@@ -5420,6 +5465,7 @@
         moved: false
       };
       const DRAG_OPEN_THRESHOLD = 8;
+      const DROP_TARGET_PROXIMITY = 190;
       const toWorldPoint = (event) => {
         const rect = mapCanvas.getBoundingClientRect();
         const scale = state.mapViewport.scale || 1;
@@ -5430,6 +5476,7 @@
       };
       const resetDragState = () => {
         dragState.activeNodeId = '';
+        dragState.targetNodeId = '';
         dragState.pointerId = null;
         dragState.offsetX = 0;
         dragState.offsetY = 0;
@@ -5438,19 +5485,32 @@
         dragState.moved = false;
       };
 
-      viewMap.querySelectorAll('[data-toggle-expand]').forEach((toggleBtn) => {
-        toggleBtn.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const universeId = toggleBtn.getAttribute('data-toggle-expand') || '';
-          if (!universeId) return;
-          const expandedList = new Set(state.mapExpandedUniverseIds || []);
-          if (expandedList.has(universeId)) expandedList.delete(universeId);
-          else expandedList.add(universeId);
-          state.mapExpandedUniverseIds = [...expandedList];
-          renderMapView();
+      const updateDragTargetHighlight = (activeNodeId = '', targetNodeId = '') => {
+        viewMap.querySelectorAll('.universe-node').forEach((nodeEl) => {
+          const nodeId = nodeEl.dataset.nodeId || '';
+          nodeEl.classList.toggle('is-dragging', Boolean(activeNodeId) && nodeId === activeNodeId);
+          nodeEl.classList.toggle('is-drop-target', Boolean(targetNodeId) && nodeId === targetNodeId);
         });
-      });
+      };
+
+      const findDropTargetForNode = (activeNode) => {
+        if (!activeNode) return null;
+        let best = null;
+        state.universeNodes.forEach((candidateNode) => {
+          if (!candidateNode || candidateNode.id === activeNode.id) return;
+          const dx = candidateNode.x - activeNode.x;
+          const dy = candidateNode.y - activeNode.y;
+          const distance = Math.hypot(dx, dy);
+          const isColliding = Math.abs(dx) <= NODE_HALF_WIDTH && Math.abs(dy) <= NODE_HALF_HEIGHT;
+          const isNear = distance <= DROP_TARGET_PROXIMITY;
+          if (!isColliding && !isNear) return;
+          const score = (isColliding ? 0 : 1) * 1000 + distance;
+          if (!best || score < best.score) {
+            best = { node: candidateNode, score };
+          }
+        });
+        return best?.node || null;
+      };
 
       viewMap.querySelectorAll('.universe-node').forEach(nodeEl => {
         const coverEl = nodeEl.querySelector('.universe-cover');
@@ -5476,6 +5536,8 @@
           dragState.offsetX = worldPoint.x - node.x;
           dragState.offsetY = worldPoint.y - node.y;
           nodeEl.dataset.dragMoved = '0';
+          dragState.targetNodeId = '';
+          updateDragTargetHighlight(node.id, '');
           nodeEl.setPointerCapture(event.pointerId);
         });
         nodeEl.addEventListener('pointermove', (event) => {
@@ -5499,17 +5561,31 @@
             dragState.moved = true;
             nodeEl.dataset.dragMoved = '1';
           }
+          const targetNode = findDropTargetForNode(node);
+          dragState.targetNodeId = targetNode?.id || '';
+          updateDragTargetHighlight(dragState.activeNodeId, dragState.targetNodeId);
         });
         const finishDrag = (event) => {
           if (dragState.pointerId !== event.pointerId) return;
           if (!dragState.activeNodeId) return;
+          const activeNodeId = dragState.activeNodeId;
+          const targetNodeId = dragState.targetNodeId;
           if (nodeEl.hasPointerCapture(event.pointerId)) {
             nodeEl.releasePointerCapture(event.pointerId);
           }
           const didMove = dragState.moved;
           resetDragState();
+          updateDragTargetHighlight('', '');
           if (!didMove) return;
+          let membershipsChanged = false;
+          if (activeNodeId && targetNodeId && activeNodeId !== targetNodeId) {
+            if (state.universeMemberships[activeNodeId] !== targetNodeId) {
+              state.universeMemberships[activeNodeId] = targetNodeId;
+              membershipsChanged = true;
+            }
+          }
           saveUniverseNodes();
+          if (membershipsChanged) saveUniverseMemberships();
           syncMapCanvasSize();
           renderMapView();
         };
@@ -5523,20 +5599,46 @@
             return;
           }
           event.stopPropagation();
-          state.universe = nodeEl.dataset.open;
-          state.selectedVideoId = null;
-          state.showAddForm = false;
-          state.marathon = {
-            playlists: [],
-            activePlaylistId: 'auto',
-            queue: [],
-            position: 0,
-            isPlaying: false,
-            shuffleEnabled: false
-          };
-          state.filters = { personaje: 'todos', actor: 'todos', rareza: 'todos' };
-          state.search = { personaje: '', actor: '' };
-          changeView('universe');
+          const clickedNodeId = nodeEl.dataset.nodeId || '';
+          const now = Date.now();
+          const isSecondClickSameNode = (
+            state.lastClickedUniverse === clickedNodeId
+            && (now - state.lastClickedUniverseAt) <= 900
+          );
+
+          if (isSecondClickSameNode) {
+            state.universe = nodeEl.dataset.open;
+            state.selectedVideoId = null;
+            state.showAddForm = false;
+            state.marathon = {
+              playlists: [],
+              activePlaylistId: 'auto',
+              queue: [],
+              position: 0,
+              isPlaying: false,
+              shuffleEnabled: false
+            };
+            state.filters = { personaje: 'todos', actor: 'todos', rareza: 'todos' };
+            state.search = { personaje: '', actor: '' };
+            changeView('universe');
+            return;
+          }
+
+          if (state.expandedUniverses.has(clickedNodeId)) state.expandedUniverses.delete(clickedNodeId);
+          else state.expandedUniverses.add(clickedNodeId);
+          state.lastClickedUniverse = clickedNodeId;
+          state.lastClickedUniverseAt = now;
+          renderMapView();
+        });
+      });
+
+      viewMap.querySelectorAll('.map-world-node').forEach((worldEl) => {
+        worldEl.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const characterName = worldEl.dataset.worldName;
+          if (!characterName) return;
+          openCharacterProfile(characterName);
         });
       });
 
@@ -8250,9 +8352,11 @@
     navMaraton.onclick = () => changeView('maraton');
 
     state.universeNodes = loadUniverseNodesFromStorage();
+    state.universeMemberships = loadUniverseMembershipsFromStorage();
     loadVideosFromStorage();
     hydrateModelWithFallback();
     state.blockedCharactersByActor = loadBlockedCharactersFromStorage();
+    sanitizeUniverseMembershipsAndPersist();
     syncBlockedCharactersToVideoPlaceholders();
 
     (async () => {
