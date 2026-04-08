@@ -502,15 +502,12 @@
     }
 
     .map-link-path--secondary {
-      stroke: rgba(255, 52, 52, .95);
-      stroke-width: 1.2;
-      stroke-dasharray: 2 7;
-      stroke-linecap: round;
-      filter:
-        drop-shadow(0 0 2px rgba(255, 72, 72, .9))
-        drop-shadow(0 0 6px rgba(255, 38, 38, .45));
-      opacity: .92;
-      animation: connectorFlow 8.2s linear infinite;
+      stroke: rgba(255, 64, 64, .72);
+      stroke-width: 0.85;
+      stroke-dasharray: none;
+      filter: drop-shadow(0 0 2px rgba(255, 68, 68, .45));
+      opacity: .5;
+      animation: none;
     }
 
     @keyframes connectorGlow {
@@ -577,8 +574,8 @@
 
     /* --- INICIO NUEVO DISEÑO ORBES ESTELARES --- */
     .universe-node {
-      --w: 190px;
-      --h: 240px;
+      --w: 150px;
+      --h: 170px;
       --orb-size: 130px;
       --title-size: 0.95rem;
       position: absolute;
@@ -596,6 +593,7 @@
       animation: nodeFloat 5.8s ease-in-out infinite;
       animation-delay: var(--float-delay, 0s);
       transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      min-height: 0;
     }
 
     @keyframes nodeFloat {
@@ -606,18 +604,28 @@
     .universe-node:hover {
       transform: scale(1.15); /* Efecto de crecimiento que pediste */
       z-index: 10; /* Lo trae al frente al hacer hover */
+      border-color: transparent;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .universe-node:active,
+    .universe-node:focus-visible {
+      border-color: transparent;
+      box-shadow: none;
+      background: transparent;
     }
 
     .universe-node--universe {
-      --w: 230px;
-      --h: 232px;
+      --w: 182px;
+      --h: 206px;
       --orb-size: 164px;
       --title-size: 1.02rem;
     }
 
     .universe-node--world {
-      --w: 180px;
-      --h: 190px;
+      --w: 142px;
+      --h: 164px;
       --orb-size: 126px;
       --title-size: 0.92rem;
       z-index: 4;
@@ -4087,10 +4095,10 @@
     const CLOUD_STORAGE_PATH = 'univoicerData/main';
     const SPECIAL_UNASSIGNED_UNIVERSE = 'Sin universo';
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
-    const NODE_HALF_WIDTH = 110;
-    const NODE_HALF_HEIGHT = 93;
-    const WORLD_NODE_HALF_WIDTH = 90;
-    const WORLD_NODE_HALF_HEIGHT = 65;
+    const NODE_HALF_WIDTH = 91;
+    const NODE_HALF_HEIGHT = 103;
+    const WORLD_NODE_HALF_WIDTH = 71;
+    const WORLD_NODE_HALF_HEIGHT = 82;
     const WORLD_ORBIT_BASE_RADIUS = 190;
     const WORLD_ORBIT_MIN_CENTER_DISTANCE = 230;
     let firebaseDb = null;
