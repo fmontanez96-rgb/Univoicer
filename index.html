@@ -508,6 +508,16 @@
       z-index: 10; /* Lo trae al frente al hacer hover */
     }
 
+    .universe-node.is-dragging {
+      z-index: 12;
+    }
+
+    .universe-node.is-drop-target .orb-container {
+      border-color: #7effa6;
+      box-shadow: 0 0 38px rgba(126, 255, 166, 0.95), inset 0 0 26px rgba(126, 255, 166, 0.45);
+      transform: scale(1.05);
+    }
+
     /* El Orbe Circular con efecto Neón */
     .universe-node .orb-container {
       width: 130px;
@@ -3902,6 +3912,7 @@
         shuffleEnabled: false
       },
       universeNodes: [],
+      universeMemberships: {},
       mapCanvas: { width: 1400, height: 900 },
       mapViewport: { scale: 1, centroidX: 0, centroidY: 0 },
       blockedCharactersByActor: {},
@@ -3922,6 +3933,7 @@
     const VIDEOS_STORAGE_KEY = 'videos_collection_v1';
     const COLLECTION_MODEL_STORAGE_KEY = 'collection_model_v1';
     const BLOCKED_CHARACTERS_STORAGE_KEY = 'blocked_characters_by_actor_v1';
+    const UNIVERSE_MEMBERSHIPS_STORAGE_KEY = 'universe_memberships_v1';
     const CLOUD_STORAGE_PATH = 'univoicerData/main';
     const SPECIAL_UNASSIGNED_UNIVERSE = 'Sin universo';
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -4439,6 +4451,37 @@
       scheduleCloudSync();
     }
 
+    function normalizeUniverseMemberships(memberships, nodes = state.universeNodes) {
+      const validNodeIds = new Set((Array.isArray(nodes) ? nodes : []).map((node) => String(node.id || '').trim()).filter(Boolean));
+      if (!memberships || typeof memberships !== 'object') return {};
+      return Object.entries(memberships).reduce((acc, [worldId, parentUniverseId]) => {
+        const childId = String(worldId || '').trim();
+        const parentId = String(parentUniverseId || '').trim();
+        if (!childId || !parentId) return acc;
+        if (childId === parentId) return acc;
+        if (!validNodeIds.has(childId) || !validNodeIds.has(parentId)) return acc;
+        acc[childId] = parentId;
+        return acc;
+      }, {});
+    }
+
+    function saveUniverseMemberships() {
+      state.universeMemberships = normalizeUniverseMemberships(state.universeMemberships);
+      localStorage.setItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY, JSON.stringify(state.universeMemberships));
+      scheduleCloudSync();
+    }
+
+    function loadUniverseMembershipsFromStorage() {
+      try {
+        const raw = localStorage.getItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return normalizeUniverseMemberships(parsed);
+      } catch (_) {
+        return {};
+      }
+    }
+
     function saveBlockedCharacters() {
       localStorage.setItem(BLOCKED_CHARACTERS_STORAGE_KEY, JSON.stringify(state.blockedCharactersByActor));
       scheduleCloudSync();
@@ -4661,6 +4704,13 @@
       }
     }
 
+    function sanitizeUniverseMembershipsAndPersist() {
+      const sanitizedMemberships = normalizeUniverseMemberships(state.universeMemberships);
+      const changed = JSON.stringify(sanitizedMemberships) !== JSON.stringify(state.universeMemberships || {});
+      state.universeMemberships = sanitizedMemberships;
+      if (changed) saveUniverseMemberships();
+    }
+
     function saveVideos() {
       localStorage.setItem(VIDEOS_STORAGE_KEY, JSON.stringify(VIDEOS));
       collectionModel = mergeModelWithLegacyVideos(collectionModel, VIDEOS);
@@ -4715,6 +4765,10 @@
         if (Array.isArray(data.universeNodes)) {
           state.universeNodes = mergeUniverseNodes(state.universeNodes, data.universeNodes);
           localStorage.setItem(UNIVERSES_STORAGE_KEY, JSON.stringify(state.universeNodes));
+        }
+        if (data.universeMemberships && typeof data.universeMemberships === 'object') {
+          state.universeMemberships = normalizeUniverseMemberships(data.universeMemberships);
+          localStorage.setItem(UNIVERSE_MEMBERSHIPS_STORAGE_KEY, JSON.stringify(state.universeMemberships));
         }
         if (Array.isArray(data.videos)) {
           VIDEOS.splice(0, VIDEOS.length, ...data.videos.filter(video => video && typeof video === 'object'));
@@ -4778,6 +4832,7 @@
           await firebaseDb.ref(CLOUD_STORAGE_PATH).set({
             updatedAt: Date.now(),
             universeNodes: state.universeNodes,
+            universeMemberships: state.universeMemberships,
             videos: VIDEOS,
             collectionModel,
             blockedCharactersByActor: state.blockedCharactersByActor
@@ -5057,6 +5112,7 @@
           node.cover = getSafeUniverseCover(node.name, '');
         }
       });
+      sanitizeUniverseMembershipsAndPersist();
       saveUniverseNodes();
     }
 
@@ -5275,6 +5331,7 @@
 
       const dragState = {
         activeNodeId: '',
+        targetNodeId: '',
         pointerId: null,
         offsetX: 0,
         offsetY: 0,
@@ -5283,6 +5340,7 @@
         moved: false
       };
       const DRAG_OPEN_THRESHOLD = 8;
+      const DROP_TARGET_PROXIMITY = 190;
       const toWorldPoint = (event) => {
         const rect = mapCanvas.getBoundingClientRect();
         const scale = state.mapViewport.scale || 1;
@@ -5293,12 +5351,40 @@
       };
       const resetDragState = () => {
         dragState.activeNodeId = '';
+        dragState.targetNodeId = '';
         dragState.pointerId = null;
         dragState.offsetX = 0;
         dragState.offsetY = 0;
         dragState.startClientX = 0;
         dragState.startClientY = 0;
         dragState.moved = false;
+      };
+
+      const updateDragTargetHighlight = (activeNodeId = '', targetNodeId = '') => {
+        viewMap.querySelectorAll('.universe-node').forEach((nodeEl) => {
+          const nodeId = nodeEl.dataset.nodeId || '';
+          nodeEl.classList.toggle('is-dragging', Boolean(activeNodeId) && nodeId === activeNodeId);
+          nodeEl.classList.toggle('is-drop-target', Boolean(targetNodeId) && nodeId === targetNodeId);
+        });
+      };
+
+      const findDropTargetForNode = (activeNode) => {
+        if (!activeNode) return null;
+        let best = null;
+        state.universeNodes.forEach((candidateNode) => {
+          if (!candidateNode || candidateNode.id === activeNode.id) return;
+          const dx = candidateNode.x - activeNode.x;
+          const dy = candidateNode.y - activeNode.y;
+          const distance = Math.hypot(dx, dy);
+          const isColliding = Math.abs(dx) <= NODE_HALF_WIDTH && Math.abs(dy) <= NODE_HALF_HEIGHT;
+          const isNear = distance <= DROP_TARGET_PROXIMITY;
+          if (!isColliding && !isNear) return;
+          const score = (isColliding ? 0 : 1) * 1000 + distance;
+          if (!best || score < best.score) {
+            best = { node: candidateNode, score };
+          }
+        });
+        return best?.node || null;
       };
 
       viewMap.querySelectorAll('.universe-node').forEach(nodeEl => {
@@ -5324,6 +5410,8 @@
           dragState.offsetX = worldPoint.x - node.x;
           dragState.offsetY = worldPoint.y - node.y;
           nodeEl.dataset.dragMoved = '0';
+          dragState.targetNodeId = '';
+          updateDragTargetHighlight(node.id, '');
           nodeEl.setPointerCapture(event.pointerId);
         });
         nodeEl.addEventListener('pointermove', (event) => {
@@ -5347,17 +5435,31 @@
             dragState.moved = true;
             nodeEl.dataset.dragMoved = '1';
           }
+          const targetNode = findDropTargetForNode(node);
+          dragState.targetNodeId = targetNode?.id || '';
+          updateDragTargetHighlight(dragState.activeNodeId, dragState.targetNodeId);
         });
         const finishDrag = (event) => {
           if (dragState.pointerId !== event.pointerId) return;
           if (!dragState.activeNodeId) return;
+          const activeNodeId = dragState.activeNodeId;
+          const targetNodeId = dragState.targetNodeId;
           if (nodeEl.hasPointerCapture(event.pointerId)) {
             nodeEl.releasePointerCapture(event.pointerId);
           }
           const didMove = dragState.moved;
           resetDragState();
+          updateDragTargetHighlight('', '');
           if (!didMove) return;
+          let membershipsChanged = false;
+          if (activeNodeId && targetNodeId && activeNodeId !== targetNodeId) {
+            if (state.universeMemberships[activeNodeId] !== targetNodeId) {
+              state.universeMemberships[activeNodeId] = targetNodeId;
+              membershipsChanged = true;
+            }
+          }
           saveUniverseNodes();
+          if (membershipsChanged) saveUniverseMemberships();
           syncMapCanvasSize();
         };
         nodeEl.addEventListener('pointerup', finishDrag);
@@ -8097,9 +8199,11 @@
     navMaraton.onclick = () => changeView('maraton');
 
     state.universeNodes = loadUniverseNodesFromStorage();
+    state.universeMemberships = loadUniverseMembershipsFromStorage();
     loadVideosFromStorage();
     hydrateModelWithFallback();
     state.blockedCharactersByActor = loadBlockedCharactersFromStorage();
+    sanitizeUniverseMembershipsAndPersist();
     syncBlockedCharactersToVideoPlaceholders();
 
     (async () => {
