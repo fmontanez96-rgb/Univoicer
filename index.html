@@ -4071,7 +4071,8 @@
         actors: [],
         characters: [],
         universes: [],
-        videos: []
+        videos: [],
+        worldMemberships: []
       };
     }
 
@@ -4080,6 +4081,12 @@
       if (!Array.isArray(rawModel.actors) || !Array.isArray(rawModel.characters) || !Array.isArray(rawModel.universes) || !Array.isArray(rawModel.videos)) {
         return null;
       }
+      const rawUniverseIds = new Set(
+        rawModel.universes
+          .filter(Boolean)
+          .map(item => String(item.id || ''))
+          .filter(Boolean)
+      );
       return {
         actors: rawModel.actors.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -4097,7 +4104,9 @@
         universes: rawModel.universes.filter(Boolean).map(item => ({
           id: String(item.id || ''),
           name: String(item.name || 'Sin universo'),
-          characterIds: Array.isArray(item.characterIds) ? [...new Set(item.characterIds.filter(Boolean).map(String))] : []
+          characterIds: Array.isArray(item.characterIds) ? [...new Set(item.characterIds.filter(Boolean).map(String))] : [],
+          kind: item.kind === 'world' ? 'world' : 'universe',
+          parentUniverseIds: Array.isArray(item.parentUniverseIds) ? [...new Set(item.parentUniverseIds.filter(Boolean).map(String))] : []
         })),
         videos: rawModel.videos.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -4107,7 +4116,17 @@
           characterId: String(item.characterId || ''),
           actorId: String(item.actorId || ''),
           universeIds: Array.isArray(item.universeIds) ? [...new Set(item.universeIds.filter(Boolean).map(String))] : []
-        }))
+        })),
+        worldMemberships: Array.isArray(rawModel.worldMemberships)
+          ? rawModel.worldMemberships
+            .filter(Boolean)
+            .map(item => ({
+              worldUniverseId: String(item.worldUniverseId || ''),
+              parentUniverseId: String(item.parentUniverseId || '')
+            }))
+            .filter(item => item.worldUniverseId && item.parentUniverseId)
+            .filter(item => rawUniverseIds.has(item.worldUniverseId) && rawUniverseIds.has(item.parentUniverseId))
+          : []
       };
     }
 
@@ -4148,7 +4167,13 @@
     function getOrCreateUniverse(model, universeName, universeMap) {
       const normalized = normalizeEntityName(universeName || 'Sin universo');
       if (universeMap.has(normalized)) return universeMap.get(normalized);
-      const universe = { id: createModelId('universe', normalized), name: (universeName || 'Sin universo').trim() || 'Sin universo', characterIds: [] };
+      const universe = {
+        id: createModelId('universe', normalized),
+        name: (universeName || 'Sin universo').trim() || 'Sin universo',
+        characterIds: [],
+        kind: 'universe',
+        parentUniverseIds: []
+      };
       model.universes.push(universe);
       universeMap.set(normalized, universe);
       return universe;
@@ -4230,9 +4255,20 @@
         })),
         universes: baseModel.universes.map((universe) => ({
           ...universe,
-          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : []
+          characterIds: Array.isArray(universe.characterIds) ? [...new Set(universe.characterIds)] : [],
+          kind: universe.kind === 'world' ? 'world' : 'universe',
+          parentUniverseIds: Array.isArray(universe.parentUniverseIds) ? [...new Set(universe.parentUniverseIds)] : []
         })),
-        videos: []
+        videos: [],
+        worldMemberships: Array.isArray(baseModel.worldMemberships)
+          ? baseModel.worldMemberships
+            .filter(Boolean)
+            .map((item) => ({
+              worldUniverseId: String(item.worldUniverseId || ''),
+              parentUniverseId: String(item.parentUniverseId || '')
+            }))
+            .filter((item) => item.worldUniverseId && item.parentUniverseId)
+          : []
       };
 
       const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
