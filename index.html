@@ -5343,28 +5343,24 @@
         if (isExpanded) {
           const entries = getUniverseWorldEntries(node.name)
             .map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }));
+          const worldCount = entries.length;
           const baseRadius = 190;
-          const minArc = 155;
-          const dynamicRadius = Math.max(baseRadius, Math.ceil((entries.length * minArc) / (Math.PI * 2)));
-          const ringCapacity = Math.max(1, Math.floor((Math.PI * 2 * dynamicRadius) / minArc));
+          const minCenterDistance = 230;
+          const minimumRadiusForSpacing = worldCount > 1
+            ? Math.ceil(minCenterDistance / (2 * Math.sin(Math.PI / worldCount)))
+            : baseRadius;
+          const orbitRadius = Math.max(baseRadius, minimumRadiusForSpacing);
+          const startAngle = ((Math.abs(hashCode(`${node.id}-${worldCount}`)) % 360) * Math.PI) / 180;
           entries.forEach((entry, index) => {
-            const ringIndex = Math.floor(index / ringCapacity);
-            const indexInRing = index % ringCapacity;
-            const ringCount = Math.max(1, Math.ceil(entries.length / ringCapacity));
-            const pointsInRing = ringIndex === ringCount - 1
-              ? (entries.length - (ringIndex * ringCapacity)) || ringCapacity
-              : ringCapacity;
-            const angleOffset = (ringIndex % 2) * (Math.PI / Math.max(4, pointsInRing));
-            const angle = angleOffset + (Math.PI * 2 * indexInRing) / Math.max(1, pointsInRing);
-            const orbitRadius = dynamicRadius + (ringIndex * 165);
+            const angle = startAngle + ((Math.PI * 2 * index) / Math.max(1, worldCount));
             const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
             const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
-            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
-            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 230, worldY - 115));
+            const safeX = Math.round(worldX - 90);
+            const safeY = Math.round(worldY - 65);
             const safeWorldName = escapeHtml(entry.name);
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
-            const worldCenterX = safeX + 90;
-            const worldCenterY = safeY + 65;
+            const worldCenterX = worldX;
+            const worldCenterY = worldY;
             const baseDx = Math.round(worldCenterX - node.x);
             const baseDy = Math.round(worldCenterY - node.y);
             const bendPull = Math.max(28, Math.min(92, orbitRadius * 0.22));
