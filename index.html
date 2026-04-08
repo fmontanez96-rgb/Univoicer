@@ -4567,6 +4567,7 @@
           x: Number(node.x) || 220 + (idx * 80),
           y: Number(node.y) || 220 + (idx * 60),
           neighbors: Array.isArray(node.neighbors) ? node.neighbors.filter(Boolean) : [],
+          parentUniverses: normalizeUniverseList(Array.isArray(node.parentUniverses) ? node.parentUniverses : [], { fallbackToUnassigned: false }),
           shape: node.shape || createNodeShape(hashCode(node.name))
         }))
         .filter(node => node.name);
@@ -4587,7 +4588,11 @@
             ...existing,
             ...node,
             cover: node.cover || existing.cover || '',
-            neighbors: [...new Set([...(existing.neighbors || []), ...(node.neighbors || [])])]
+            neighbors: [...new Set([...(existing.neighbors || []), ...(node.neighbors || [])])],
+            parentUniverses: normalizeUniverseList(
+              [...(existing.parentUniverses || []), ...(node.parentUniverses || [])],
+              { fallbackToUnassigned: false }
+            )
           });
         });
       });
@@ -4757,9 +4762,33 @@
       return video.universo ? [video.universo] : [];
     }
 
+    function getUniverseDescendantKeys(universeName) {
+      const rootKey = normalizeUniverseName(universeName || '');
+      if (!rootKey) return [];
+      const descendants = new Set([rootKey]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        state.universeNodes.forEach((node) => {
+          const nodeKey = normalizeUniverseName(node.name);
+          if (!nodeKey || descendants.has(nodeKey)) return;
+          const parentKeys = normalizeUniverseList(node.parentUniverses || [], { fallbackToUnassigned: false })
+            .map((name) => normalizeUniverseName(name))
+            .filter(Boolean);
+          if (parentKeys.some((parentKey) => descendants.has(parentKey))) {
+            descendants.add(nodeKey);
+            changed = true;
+          }
+        });
+      }
+      return [...descendants];
+    }
+
     function getUniverseVideos() {
-      const target = normalizeUniverseName(state.universe || '');
-      return VIDEOS.filter(v => getVideoUniverses(v).some(name => normalizeUniverseName(name) === target));
+      const universeKeys = new Set(getUniverseDescendantKeys(state.universe || ''));
+      if (!universeKeys.size) return [];
+      return VIDEOS.filter((video) => getVideoUniverses(video)
+        .some((name) => universeKeys.has(normalizeUniverseName(name))));
     }
 
     function getUniverseCoverByName(universeName) {
@@ -4972,6 +5001,7 @@
           x: Math.round(state.mapCanvas.width / 2),
           y: Math.round(state.mapCanvas.height / 2),
           neighbors: [],
+          parentUniverses: [],
           shape: createNodeShape(firstSeed)
         });
       }
@@ -5003,6 +5033,7 @@
           x: point.x,
           y: point.y,
           neighbors: point.anchorId ? [point.anchorId] : [],
+          parentUniverses: [],
           shape: createNodeShape(seed)
         });
 
@@ -5020,6 +5051,20 @@
         } else if (!node.cover) {
           node.cover = getSafeUniverseCover(node.name, '');
         }
+        node.parentUniverses = normalizeUniverseList(node.parentUniverses || [], { fallbackToUnassigned: false })
+          .filter((parentName) => normalizeUniverseName(parentName) !== normalizeUniverseName(node.name));
+      });
+
+      const nodeIdByUniverseKey = new Map(state.universeNodes.map((node) => [normalizeUniverseName(node.name), node.id]));
+      state.universeNodes.forEach((node) => {
+        const parentIds = normalizeUniverseList(node.parentUniverses || [], { fallbackToUnassigned: false })
+          .map((parentName) => nodeIdByUniverseKey.get(normalizeUniverseName(parentName)))
+          .filter(Boolean);
+        node.neighbors = [...new Set([...(node.neighbors || []), ...parentIds])];
+        parentIds.forEach((parentId) => {
+          const parentNode = state.universeNodes.find((candidate) => candidate.id === parentId);
+          if (parentNode && !parentNode.neighbors.includes(node.id)) parentNode.neighbors.push(node.id);
+        });
       });
       saveUniverseNodes();
     }
@@ -5228,6 +5273,7 @@
             x: boundedX,
             y: boundedY,
             neighbors: [],
+            parentUniverses: [],
             shape: createNodeShape(hashCode(name))
           });
           syncMapCanvasSize();
@@ -5448,9 +5494,21 @@
       const playableCharactersCount = new Set(
         playableVideos.map((video) => String(video.personaje || '').trim()).filter(Boolean)
       ).size;
-      const universeMap = groupByUniverse();
+      const allCharactersInScope = new Set(videos.map((video) => String(video.personaje || '').trim()).filter(Boolean));
+      const completion = allCharactersInScope.size
+        ? Math.round((playableCharactersCount / allCharactersInScope.size) * 100)
+        : 0;
+      const universeData = {
+        totalCharacters: allCharactersInScope.size,
+        unlockedCharacters: playableCharactersCount,
+        completion,
+        state: completion === 100 && allCharactersInScope.size > 0
+          ? 'complete'
+          : completion > 0
+            ? 'advanced'
+            : 'incomplete'
+      };
       const selectedUniverseKey = normalizeUniverseName(state.universe || '');
-      const universeData = universeMap[selectedUniverseKey] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
       const rarezas = ['Común', 'Raro', 'Épico', 'Legendario'];
       const universeCharacters = [...new Set(videos.map(v => String(v.personaje || '').trim()).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
@@ -5573,6 +5631,14 @@
                     required
                     value="${escapeHtml(state.universe || '')}"
                     placeholder="Ej. Dragon Ball"
+                  >
+                </label>
+                <label>Universos padre (CSV)
+                  <input
+                    type="text"
+                    name="universosPadre"
+                    value="${escapeHtml((universeNode?.parentUniverses || []).join(', '))}"
+                    placeholder="Ej. Shonen, Anime clásico"
                   >
                 </label>
                 <label>Portada</label>
@@ -5750,6 +5816,51 @@
           renderUniverseView();
           return;
         }
+        const rawParentCsv = String(formData.get('universosPadre') || '');
+        const parsedParentEntries = rawParentCsv
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        const parentUniverseByKey = new Map();
+        const hasInvalidEmptyValue = rawParentCsv
+          .split(',')
+          .some((entry) => entry.length > 0 && !entry.trim());
+        if (hasInvalidEmptyValue) {
+          state.editUniverseFeedback = { type: 'error', text: 'Universos padre inválidos: hay valores vacíos entre comas.' };
+          renderUniverseView();
+          return;
+        }
+        const knownUniverseNames = [
+          ...state.universeNodes.map((node) => node.name),
+          ...Object.values(groupByUniverse()).map((universe) => universe.name),
+          cleanName
+        ];
+        const knownByKey = new Map();
+        knownUniverseNames.forEach((name) => {
+          const normalized = normalizeUniverseName(name);
+          if (!normalized || knownByKey.has(normalized)) return;
+          knownByKey.set(normalized, String(name || '').trim());
+        });
+        for (const parentNameRaw of parsedParentEntries) {
+          const normalizedParent = normalizeUniverseName(parentNameRaw);
+          if (!normalizedParent) {
+            state.editUniverseFeedback = { type: 'error', text: 'Universos padre inválidos: hay nombres vacíos.' };
+            renderUniverseView();
+            return;
+          }
+          if (normalizedParent === cleanNameKey) {
+            state.editUniverseFeedback = { type: 'error', text: 'Un universo no puede ser padre de sí mismo.' };
+            renderUniverseView();
+            return;
+          }
+          if (parentUniverseByKey.has(normalizedParent)) {
+            state.editUniverseFeedback = { type: 'error', text: 'No repitas universos padre en la lista.' };
+            renderUniverseView();
+            return;
+          }
+          parentUniverseByKey.set(normalizedParent, knownByKey.get(normalizedParent) || parentNameRaw);
+        }
+        const parentUniverses = [...parentUniverseByKey.values()];
         const file = formData.get('portadaArchivo');
         const rawCoverUrl = String(formData.get('portadaUrl') || '');
         let nextCover = universeNode?.cover || '';
@@ -5773,7 +5884,14 @@
         if (universeNode) {
           universeNode.name = cleanName;
           universeNode.cover = nextCover || '';
+          universeNode.parentUniverses = parentUniverses;
         }
+        state.universeNodes.forEach((node) => {
+          if (node.id === universeNode?.id) return;
+          node.parentUniverses = normalizeUniverseList((node.parentUniverses || []).map((parentName) => (
+            normalizeUniverseName(parentName) === currentUniverseKey ? cleanName : parentName
+          )), { fallbackToUnassigned: false });
+        });
         state.universe = cleanName;
         state.editUniverseFeedback = { type: 'success', text: 'Universo actualizado correctamente.' };
         saveUniverseNodes();
@@ -5786,6 +5904,11 @@
         if (!ok) return;
         const currentUniverseKey = normalizeUniverseName(state.universe || '');
         state.universeNodes = state.universeNodes.filter(node => normalizeUniverseName(node.name) !== currentUniverseKey);
+        state.universeNodes.forEach((node) => {
+          node.parentUniverses = normalizeUniverseList((node.parentUniverses || []).filter(
+            (parentName) => normalizeUniverseName(parentName) !== currentUniverseKey
+          ), { fallbackToUnassigned: false });
+        });
         VIDEOS.forEach(video => {
           video.universo = getVideoUniverses(video).filter(name => normalizeUniverseName(name) !== currentUniverseKey);
         });
