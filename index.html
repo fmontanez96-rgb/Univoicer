@@ -477,6 +477,50 @@
       z-index: 2;
     }
 
+    .map-links {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+      overflow: visible;
+    }
+
+    .map-link {
+      stroke: rgba(126, 211, 255, .52);
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      fill: none;
+      filter: drop-shadow(0 0 8px rgba(91, 216, 255, .3));
+    }
+
+    .map-link--cross {
+      stroke: rgba(196, 154, 255, .45);
+      stroke-dasharray: 6 6;
+      stroke-width: 1.9;
+    }
+
+    .world-node {
+      position: absolute;
+      width: 124px;
+      min-height: 54px;
+      border-radius: 14px;
+      border: 1px solid rgba(134, 215, 255, .5);
+      background: linear-gradient(160deg, rgba(18, 36, 66, .95), rgba(30, 24, 58, .94));
+      color: #eff9ff;
+      padding: 8px 10px;
+      font-size: .76rem;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      text-align: center;
+      box-shadow: 0 10px 20px rgba(3, 10, 25, .5), inset 0 0 0 1px rgba(215, 247, 255, .08);
+      pointer-events: none;
+      z-index: 4;
+    }
+
     /* --- INICIO NUEVO DISEÑO ORBES ESTELARES --- */
     .universe-node {
       --w: 180px;
@@ -581,6 +625,26 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
+    }
+
+    .node-expand-toggle {
+      margin-top: 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(136, 214, 255, .65);
+      background: rgba(8, 20, 43, .92);
+      color: #e5f8ff;
+      font-weight: 800;
+      font-size: .7rem;
+      letter-spacing: .07em;
+      padding: 5px 10px;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+
+    .node-expand-toggle:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 14px rgba(114, 226, 255, .36);
     }
 
     .map-popup {
@@ -3902,6 +3966,7 @@
         shuffleEnabled: false
       },
       universeNodes: [],
+      mapExpandedUniverseIds: [],
       mapCanvas: { width: 1400, height: 900 },
       mapViewport: { scale: 1, centroidX: 0, centroidY: 0 },
       blockedCharactersByActor: {},
@@ -5027,10 +5092,107 @@
     function renderMapView() {
       const universes = groupByUniverse();
       ensureUniverseNodes();
-      const nodesMarkup = state.universeNodes.map(node => {
+
+      const inboundById = new Map();
+      state.universeNodes.forEach((node) => {
+        (node.neighbors || []).forEach((neighborId) => {
+          inboundById.set(neighborId, (inboundById.get(neighborId) || 0) + 1);
+        });
+      });
+      const rootUniverseNodes = state.universeNodes.filter(node => (inboundById.get(node.id) || 0) === 0);
+      const visibleUniverseNodes = rootUniverseNodes.length ? rootUniverseNodes : state.universeNodes;
+      const visibleUniverseIds = new Set(visibleUniverseNodes.map(node => node.id));
+      const universeNodeByKey = new Map(visibleUniverseNodes.map(node => [normalizeUniverseName(node.name), node]));
+      state.mapExpandedUniverseIds = (state.mapExpandedUniverseIds || []).filter(id => visibleUniverseIds.has(id));
+      const expandedUniverseIds = new Set(state.mapExpandedUniverseIds || []);
+
+      const characterUniverseLinks = new Map();
+      collectionModel.videos.forEach((video) => {
+        const characterName = String(video.personaje || '').trim();
+        if (!characterName) return;
+        const charKey = normalizeName(characterName);
+        if (!charKey) return;
+        const universeNames = getVideoUniverses(video)
+          .map(name => normalizeUniverseName(name))
+          .filter(Boolean);
+        if (!universeNames.length) return;
+        if (!characterUniverseLinks.has(charKey)) {
+          characterUniverseLinks.set(charKey, {
+            key: charKey,
+            name: characterName,
+            universeKeys: new Set()
+          });
+        }
+        const record = characterUniverseLinks.get(charKey);
+        universeNames.forEach((universeKey) => record.universeKeys.add(universeKey));
+      });
+
+      const worldNodes = [];
+      const mapLinks = [];
+      const WORLD_HALF_W = 62;
+      const WORLD_HALF_H = 27;
+      const clampToCanvas = (x, y) => ({
+        x: Math.max(WORLD_HALF_W + 6, Math.min(Math.round(x), state.mapCanvas.width - WORLD_HALF_W - 6)),
+        y: Math.max(WORLD_HALF_H + 6, Math.min(Math.round(y), state.mapCanvas.height - WORLD_HALF_H - 6))
+      });
+
+      visibleUniverseNodes.forEach((parentNode) => {
+        if (!expandedUniverseIds.has(parentNode.id)) return;
+        const parentKey = normalizeUniverseName(parentNode.name);
+        const worldsInUniverse = [];
+        characterUniverseLinks.forEach((characterRecord) => {
+          if (characterRecord.universeKeys.has(parentKey)) worldsInUniverse.push(characterRecord);
+        });
+        worldsInUniverse.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+        const total = worldsInUniverse.length;
+        worldsInUniverse.forEach((characterRecord, index) => {
+          const seed = Math.abs(hashCode(`${parentNode.id}:${characterRecord.key}`));
+          const angleStep = total > 0 ? (Math.PI * 2) / total : 0;
+          const baseAngle = (angleStep * index) + ((seed % 60) - 30) * (Math.PI / 180);
+          const radius = 185 + (seed % 90);
+          const jitter = ((seed % 24) - 12);
+          const point = clampToCanvas(
+            parentNode.x + (Math.cos(baseAngle) * radius) + jitter,
+            parentNode.y + (Math.sin(baseAngle) * radius) - jitter
+          );
+          const worldId = `${parentNode.id}::${characterRecord.key}`;
+          worldNodes.push({
+            id: worldId,
+            name: characterRecord.name,
+            x: point.x,
+            y: point.y
+          });
+          mapLinks.push({
+            id: `link-${parentNode.id}-${worldId}`,
+            fromX: parentNode.x,
+            fromY: parentNode.y,
+            toX: point.x,
+            toY: point.y,
+            className: 'map-link'
+          });
+
+          characterRecord.universeKeys.forEach((linkedUniverseKey) => {
+            if (linkedUniverseKey === parentKey) return;
+            const linkedUniverse = universeNodeByKey.get(linkedUniverseKey);
+            if (!linkedUniverse) return;
+            mapLinks.push({
+              id: `cross-${worldId}-${linkedUniverse.id}`,
+              fromX: point.x,
+              fromY: point.y,
+              toX: linkedUniverse.x,
+              toY: linkedUniverse.y,
+              className: 'map-link map-link--cross'
+            });
+          });
+        });
+      });
+
+      const nodesMarkup = visibleUniverseNodes.map(node => {
         const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const floatDelay = ((Math.abs(hashCode(node.id)) % 24) / 10).toFixed(1);
         const safeName = escapeHtml(node.name);
+        const isExpanded = expandedUniverseIds.has(node.id);
         return `
           <button class="universe-node" data-node-id="${node.id}" data-open="${safeName}" style="left:${node.x - NODE_HALF_WIDTH}px; top:${node.y - NODE_HALF_HEIGHT}px; --float-delay:-${floatDelay}s;">
             <div class="orb-container">
@@ -5046,16 +5208,27 @@
               <span class="completion-track" aria-hidden="true">
                 <span class="completion-fill completion-fill--${universeData.state}" style="width:${universeData.completion}%;"></span>
               </span>
+              <button type="button" class="node-expand-toggle" data-toggle-expand="${node.id}" aria-expanded="${isExpanded ? 'true' : 'false'}">
+                ${isExpanded ? 'COLAPSAR' : 'EXPANDIR'}
+              </button>
             </div>
           </button>
         `;
       }).join('');
+      const linksMarkup = mapLinks.map((link) => (
+        `<line class="${link.className}" x1="${link.fromX}" y1="${link.fromY}" x2="${link.toX}" y2="${link.toY}"></line>`
+      )).join('');
+      const worldsMarkup = worldNodes.map((worldNode) => (
+        `<article class="world-node" data-world-id="${worldNode.id}" style="left:${worldNode.x - WORLD_HALF_W}px; top:${worldNode.y - WORLD_HALF_H}px;">${escapeHtml(worldNode.name)}</article>`
+      )).join('');
       viewMap.innerHTML = `
         <div class="universe-map-shell">
           <div id="universeMapCanvas" aria-label="Mapa de universos explorable">
             <div class="map-nebula-layer" aria-hidden="true"></div>
             <div class="map-stars-layer" aria-hidden="true"></div>
             <div class="map-world" id="mapWorld">
+              <svg class="map-links" aria-hidden="true" viewBox="0 0 ${state.mapCanvas.width} ${state.mapCanvas.height}" preserveAspectRatio="none">${linksMarkup}</svg>
+              ${worldsMarkup}
               ${nodesMarkup}
             </div>
           </div>
@@ -5265,6 +5438,20 @@
         dragState.moved = false;
       };
 
+      viewMap.querySelectorAll('[data-toggle-expand]').forEach((toggleBtn) => {
+        toggleBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const universeId = toggleBtn.getAttribute('data-toggle-expand') || '';
+          if (!universeId) return;
+          const expandedList = new Set(state.mapExpandedUniverseIds || []);
+          if (expandedList.has(universeId)) expandedList.delete(universeId);
+          else expandedList.add(universeId);
+          state.mapExpandedUniverseIds = [...expandedList];
+          renderMapView();
+        });
+      });
+
       viewMap.querySelectorAll('.universe-node').forEach(nodeEl => {
         const coverEl = nodeEl.querySelector('.universe-cover');
         coverEl?.addEventListener('error', () => {
@@ -5273,6 +5460,7 @@
         });
         nodeEl.addEventListener('pointerdown', (event) => {
           if (event.button !== 0) return;
+          if ((event.target instanceof Element) && event.target.closest('.node-expand-toggle')) return;
           if (!mapShell) return;
           const nodeId = nodeEl.dataset.nodeId || '';
           const node = state.universeNodes.find(item => item.id === nodeId);
@@ -5323,6 +5511,7 @@
           if (!didMove) return;
           saveUniverseNodes();
           syncMapCanvasSize();
+          renderMapView();
         };
         nodeEl.addEventListener('pointerup', finishDrag);
         nodeEl.addEventListener('pointercancel', finishDrag);
