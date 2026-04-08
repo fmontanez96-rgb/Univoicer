@@ -4607,7 +4607,12 @@
         const nextParentId = getUniverseParentId(currentId);
         if (!nextParentId) return false;
         if (nextParentId === normalizedChildId) return true;
-        if (visited.has(nextParentId)) return true;
+        if (visited.has(nextParentId)) {
+          // Evita bloquear reasignaciones válidas por un ciclo preexistente
+          // en otra rama; este chequeo solo debe detectar si el hijo quedaría
+          // dentro de su propia cadena de ancestros.
+          return false;
+        }
         visited.add(nextParentId);
         currentId = nextParentId;
       }
