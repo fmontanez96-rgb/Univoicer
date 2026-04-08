@@ -477,6 +477,34 @@
       z-index: 2;
     }
 
+    .map-links-layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    .map-link-path {
+      fill: none;
+      stroke: #38c6ff;
+      stroke-width: 3.2;
+      stroke-linecap: round;
+      filter:
+        drop-shadow(0 0 5px rgba(76, 205, 255, .95))
+        drop-shadow(0 0 11px rgba(67, 166, 255, .95))
+        drop-shadow(0 0 22px rgba(53, 136, 255, .68));
+      stroke-dasharray: 6 12;
+      animation: cometFlow 1.15s linear infinite;
+      opacity: .94;
+    }
+
+    @keyframes cometFlow {
+      to { stroke-dashoffset: -36; }
+    }
+
     .absorption-effect {
       position: absolute;
       left: var(--start-x, 0px);
@@ -4061,8 +4089,6 @@
       showCharacterInlineEdit: false,
       showCharacterInlineDelete: false,
       expandedUniverses: new Set(),
-      lastClickedUniverse: '',
-      lastClickedUniverseAt: 0,
       mapWorldFilter: 'universe',
       mapAbsorptionEffect: null
     };
@@ -5374,12 +5400,8 @@
       const universes = groupByUniverse();
       ensureUniverseNodes();
       const worldNodes = [];
-      const connectorNodes = [];
-      const childUniverseIds = new Set(
-        Object.entries(state.universeMemberships || {})
-          .filter(([, parentIds]) => Array.isArray(parentIds) ? parentIds.length > 0 : Boolean(parentIds))
-          .map(([childId]) => childId)
-      );
+      const worldLinks = [];
+      const childUniverseIds = new Set(Object.keys(state.universeMemberships || {}));
       const rootUniverseNodes = state.universeNodes.filter(node => !childUniverseIds.has(node.id));
       const absorptionEffect = state.mapAbsorptionEffect;
       const absorptionMarkup = absorptionEffect
@@ -5395,11 +5417,25 @@
         const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const isExpanded = state.expandedUniverses.has(node.id);
         if (isExpanded) {
-          const { universeChildWorldEntries } = getUniverseWorldEntries(node.name);
-          const entries = universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child' }));
-          const orbitRadius = 170;
+          const { characterWorldEntries, universeChildWorldEntries } = getUniverseWorldEntries(node.name);
+          const entries = [
+            ...characterWorldEntries.map((entry) => ({ ...entry, type: 'character', worldKey: `character:${normalizeUniverseName(entry.name)}` })),
+            ...universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }))
+          ];
+          const baseRadius = 190;
+          const minArc = 155;
+          const dynamicRadius = Math.max(baseRadius, Math.ceil((entries.length * minArc) / (Math.PI * 2)));
+          const ringCapacity = Math.max(1, Math.floor((Math.PI * 2 * dynamicRadius) / minArc));
           entries.forEach((entry, index) => {
-            const angle = (Math.PI * 2 * index) / Math.max(1, entries.length);
+            const ringIndex = Math.floor(index / ringCapacity);
+            const indexInRing = index % ringCapacity;
+            const ringCount = Math.max(1, Math.ceil(entries.length / ringCapacity));
+            const pointsInRing = ringIndex === ringCount - 1
+              ? (entries.length - (ringIndex * ringCapacity)) || ringCapacity
+              : ringCapacity;
+            const angleOffset = (ringIndex % 2) * (Math.PI / Math.max(4, pointsInRing));
+            const angle = angleOffset + (Math.PI * 2 * indexInRing) / Math.max(1, pointsInRing);
+            const orbitRadius = dynamicRadius + (ringIndex * 165);
             const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
             const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
             const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
@@ -5409,8 +5445,31 @@
             const worldCenterY = safeY + 63;
             const stats = entry.stats || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
+            const worldCenterX = safeX + 90;
+            const worldCenterY = safeY + 65;
+            const bendPull = Math.max(28, Math.min(92, orbitRadius * 0.22));
+            const controlX = ((node.x + worldCenterX) / 2) + (Math.cos(angle) * bendPull);
+            const controlY = ((node.y + worldCenterY) / 2) + (Math.sin(angle) * bendPull);
+            worldLinks.push(`
+              <path
+                class="map-link-path"
+                data-parent-id="${node.id}"
+                data-world-key="${entry.worldKey}"
+                data-base-angle="${angle.toFixed(4)}"
+                d="M ${node.x} ${node.y} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(worldCenterX)} ${Math.round(worldCenterY)}"
+              ></path>
+            `);
             worldNodes.push(`
-              <button class="universe-node universe-node--world" data-world-name="${safeWorldName}" data-world-type="${entry.type}" data-locked="${entry.unlocked ? '0' : '1'}" style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;">
+              <button
+                class="universe-node universe-node--world"
+                data-world-name="${safeWorldName}"
+                data-world-type="${entry.type}"
+                data-world-key="${entry.worldKey}"
+                data-parent-id="${node.id}"
+                data-base-angle="${angle.toFixed(4)}"
+                data-locked="${entry.unlocked ? '0' : '1'}"
+                style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;"
+              >
                 <div class="orb-container">
                   <img class="universe-cover" src="${getSafeUniverseCover(entry.name, entry.cover)}" alt="Portada de ${safeWorldName}" loading="lazy">
                   <span class="cover-fallback">Sin portada</span>
@@ -5478,6 +5537,9 @@
             <div class="map-nebula-layer" aria-hidden="true"></div>
             <div class="map-stars-layer" aria-hidden="true"></div>
             <div class="map-world" id="mapWorld">
+              <svg class="map-links-layer" id="mapLinksLayer" viewBox="0 0 ${state.mapCanvas.width} ${state.mapCanvas.height}" preserveAspectRatio="none" aria-hidden="true">
+                ${worldLinks.join('')}
+              </svg>
               ${absorptionMarkup}
               ${connectorNodes.join('')}
               ${worldNodes.join('')}
@@ -5701,6 +5763,41 @@
         });
       };
 
+      const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle, stretch = 1) => {
+        if (!pathEl) return;
+        const safeStretch = Math.max(1, stretch || 1);
+        const bendPull = Math.max(30, Math.min(130, Math.hypot(endX - startX, endY - startY) * 0.22 * safeStretch));
+        const controlX = ((startX + endX) / 2) + (Math.cos(angle) * bendPull);
+        const controlY = ((startY + endY) / 2) + (Math.sin(angle) * bendPull);
+        pathEl.setAttribute('d', `M ${Math.round(startX)} ${Math.round(startY)} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(endX)} ${Math.round(endY)}`);
+      };
+
+      const updateExpandedWorldsForParent = (parentNodeId, dragMagnitude = 0) => {
+        if (!parentNodeId || !state.expandedUniverses.has(parentNodeId)) return;
+        const parentNode = state.universeNodes.find((item) => item.id === parentNodeId);
+        if (!parentNode) return;
+        const worldEls = [...viewMap.querySelectorAll(`.universe-node--world[data-parent-id="${parentNodeId}"]`)];
+        const stretch = 1 + Math.min(0.38, dragMagnitude / 380);
+        worldEls.forEach((worldEl) => {
+          const baseAngle = Number.parseFloat(worldEl.dataset.baseAngle || '0');
+          const worldRectX = Number.parseFloat(worldEl.style.left || '0');
+          const worldRectY = Number.parseFloat(worldEl.style.top || '0');
+          if (!Number.isFinite(baseAngle) || !Number.isFinite(worldRectX) || !Number.isFinite(worldRectY)) return;
+          const centerX = worldRectX + 90;
+          const centerY = worldRectY + 65;
+          const dx = centerX - parentNode.x;
+          const dy = centerY - parentNode.y;
+          const radius = Math.hypot(dx, dy) || 1;
+          const targetCenterX = parentNode.x + (Math.cos(baseAngle) * radius * stretch);
+          const targetCenterY = parentNode.y + (Math.sin(baseAngle) * radius * stretch);
+          worldEl.style.left = `${Math.round(targetCenterX - 90)}px`;
+          worldEl.style.top = `${Math.round(targetCenterY - 65)}px`;
+          const worldKey = worldEl.dataset.worldKey || '';
+          const pathEl = viewMap.querySelector(`.map-link-path[data-parent-id="${parentNodeId}"][data-world-key="${worldKey}"]`);
+          updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle, stretch);
+        });
+      };
+
       const findDropTargetForNode = (activeNode) => {
         if (!activeNode) return null;
         let best = null;
@@ -5763,6 +5860,7 @@
           node.y = boundedY;
           nodeEl.style.left = `${boundedX - NODE_HALF_WIDTH}px`;
           nodeEl.style.top = `${boundedY - NODE_HALF_HEIGHT}px`;
+          updateExpandedWorldsForParent(node.id, Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY));
           const movedDistance = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
           if (!dragState.moved && movedDistance >= DRAG_OPEN_THRESHOLD) {
             dragState.moved = true;
@@ -5847,34 +5945,8 @@
           }
           event.stopPropagation();
           const clickedNodeId = nodeEl.dataset.nodeId || '';
-          const now = Date.now();
-          const isSecondClickSameNode = (
-            state.lastClickedUniverse === clickedNodeId
-            && (now - state.lastClickedUniverseAt) <= 900
-          );
-
-          if (isSecondClickSameNode) {
-            state.universe = nodeEl.dataset.open;
-            state.selectedVideoId = null;
-            state.showAddForm = false;
-            state.marathon = {
-              playlists: [],
-              activePlaylistId: 'auto',
-              queue: [],
-              position: 0,
-              isPlaying: false,
-              shuffleEnabled: false
-            };
-            state.filters = { personaje: 'todos', actor: 'todos', rareza: 'todos' };
-            state.search = { personaje: '', actor: '' };
-            changeView('universe');
-            return;
-          }
-
           if (state.expandedUniverses.has(clickedNodeId)) state.expandedUniverses.delete(clickedNodeId);
           else state.expandedUniverses.add(clickedNodeId);
-          state.lastClickedUniverse = clickedNodeId;
-          state.lastClickedUniverseAt = now;
           renderMapView();
         });
       });
