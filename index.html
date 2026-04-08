@@ -4484,6 +4484,39 @@
       scheduleCloudSync();
     }
 
+    function getUniverseParentId(nodeId) {
+      const normalizedId = String(nodeId || '').trim();
+      if (!normalizedId) return '';
+      const node = state.universeNodes.find((item) => item.id === normalizedId);
+      const explicitParentId = String(node?.parentUniverseId || '').trim();
+      if (explicitParentId) return explicitParentId;
+      return String(state.universeMemberships?.[normalizedId] || '').trim();
+    }
+
+    function wouldCreateUniverseCycle(childId, parentId) {
+      const normalizedChildId = String(childId || '').trim();
+      const normalizedParentId = String(parentId || '').trim();
+      if (!normalizedChildId || !normalizedParentId) return false;
+      if (normalizedChildId === normalizedParentId) return true;
+      const visited = new Set([normalizedParentId]);
+      let currentId = normalizedParentId;
+      while (currentId) {
+        const nextParentId = getUniverseParentId(currentId);
+        if (!nextParentId) return false;
+        if (nextParentId === normalizedChildId) return true;
+        if (visited.has(nextParentId)) return true;
+        visited.add(nextParentId);
+        currentId = nextParentId;
+      }
+      return false;
+    }
+
+    function nodeHasChildren(nodeId) {
+      const normalizedId = String(nodeId || '').trim();
+      if (!normalizedId) return false;
+      return state.universeNodes.some((node) => getUniverseParentId(node.id) === normalizedId);
+    }
+
     function normalizeUniverseMemberships(memberships, nodes = state.universeNodes) {
       const validNodeIds = new Set((Array.isArray(nodes) ? nodes : []).map((node) => String(node.id || '').trim()).filter(Boolean));
       if (!memberships || typeof memberships !== 'object') return {};
@@ -4493,6 +4526,7 @@
         if (!childId || !parentId) return acc;
         if (childId === parentId) return acc;
         if (!validNodeIds.has(childId) || !validNodeIds.has(parentId)) return acc;
+        if (wouldCreateUniverseCycle(childId, parentId)) return acc;
         acc[childId] = parentId;
         return acc;
       }, {});
@@ -4679,7 +4713,9 @@
           x: Number(node.x) || 220 + (idx * 80),
           y: Number(node.y) || 220 + (idx * 60),
           neighbors: Array.isArray(node.neighbors) ? node.neighbors.filter(Boolean) : [],
-          shape: node.shape || createNodeShape(hashCode(node.name))
+          shape: node.shape || createNodeShape(hashCode(node.name)),
+          kind: node.kind === 'world' ? 'world' : 'universe',
+          parentUniverseId: String(node.parentUniverseId || '').trim()
         }))
         .filter(node => node.name);
     }
@@ -5096,7 +5132,9 @@
           x: Math.round(state.mapCanvas.width / 2),
           y: Math.round(state.mapCanvas.height / 2),
           neighbors: [],
-          shape: createNodeShape(firstSeed)
+          shape: createNodeShape(firstSeed),
+          kind: 'universe',
+          parentUniverseId: ''
         });
       }
 
@@ -5127,7 +5165,9 @@
           x: point.x,
           y: point.y,
           neighbors: point.anchorId ? [point.anchorId] : [],
-          shape: createNodeShape(seed)
+          shape: createNodeShape(seed),
+          kind: 'universe',
+          parentUniverseId: ''
         });
 
         if (point.anchorId) {
@@ -5138,6 +5178,8 @@
         }
       });
       state.universeNodes.forEach(node => {
+        if (node.kind !== 'world' && node.kind !== 'universe') node.kind = 'universe';
+        if (typeof node.parentUniverseId !== 'string') node.parentUniverseId = '';
         const universeData = universeMap[normalizeUniverseName(node.name)];
         if (!node.cover && universeData) {
           node.cover = getSafeUniverseCover(node.name, getUniverseCover(universeData.videos || []));
@@ -5524,9 +5566,24 @@
           if (!didMove) return;
           let membershipsChanged = false;
           if (activeNodeId && targetNodeId && activeNodeId !== targetNodeId) {
-            if (state.universeMemberships[activeNodeId] !== targetNodeId) {
-              state.universeMemberships[activeNodeId] = targetNodeId;
-              membershipsChanged = true;
+            if (wouldCreateUniverseCycle(activeNodeId, targetNodeId)) {
+              alert('No se puede crear una relación cíclica entre universos.');
+            } else {
+              const activeNode = state.universeNodes.find(item => item.id === activeNodeId);
+              if (activeNode && nodeHasChildren(activeNodeId)) {
+                alert('No se puede convertir en mundo un universo que ya tiene hijos.');
+              } else if (activeNode) {
+                if (state.universeMemberships[activeNodeId] !== targetNodeId) {
+                  state.universeMemberships[activeNodeId] = targetNodeId;
+                  membershipsChanged = true;
+                }
+                if (activeNode.kind !== 'world') {
+                  activeNode.kind = 'world';
+                }
+                if (activeNode.parentUniverseId !== targetNodeId) {
+                  activeNode.parentUniverseId = targetNodeId;
+                }
+              }
             }
           }
           saveUniverseNodes();
