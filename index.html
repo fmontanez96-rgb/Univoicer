@@ -4117,7 +4117,6 @@
     let marathonPlayer = null;
     let marathonPlayerReady = false;
     let marathonPlayerApiPromise = null;
-    let marathonPlayerMount = null;
 
     const appLayout = document.getElementById('appLayout');
     const toggleSidebar = document.getElementById('toggleSidebar');
@@ -8132,6 +8131,9 @@
         `<option value="${playlist.id}" ${playlist.id === marathon.activePlaylistId ? 'selected' : ''}>${playlist.name}</option>`
       )).join('');
       const currentVideo = marathon.queue[marathon.position] || null;
+      const embedUrl = currentVideo
+        ? toEmbedUrl(currentVideo.url_youtube || currentVideo.url_video || '', marathon.isPlaying ? 1 : 0)
+        : '';
       viewMaraton.innerHTML = `
         <section class="marathon">
           <header class="marathon-header">
@@ -8145,8 +8147,8 @@
                 ${playlistOptions}
               </select>
               <div class="marathon-player-shell">
-                ${currentVideo
-                  ? '<div id="videoPlayer"></div>'
+                ${embedUrl
+                  ? `<iframe src="${embedUrl}" title="${escapeHtml(currentVideo?.titulo || 'Reproductor de maratón')}" allow="autoplay; encrypted-media" allowfullscreen></iframe>`
                   : '<div class="marathon-empty">No hay videos disponibles para esta playlist.</div>'}
               </div>
               <div class="marathon-controls">
@@ -8183,14 +8185,8 @@
       });
       document.getElementById('marathonPlayPauseBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
-        if (state.marathon.isPlaying) {
-          state.marathon.isPlaying = false;
-          if (marathonPlayerReady && marathonPlayer?.pauseVideo) marathonPlayer.pauseVideo();
-        } else {
-          state.marathon.isPlaying = true;
-          if (marathonPlayerReady && marathonPlayer?.playVideo) marathonPlayer.playVideo();
-        }
-        updateMarathonPlayPauseButton();
+        state.marathon.isPlaying = !state.marathon.isPlaying;
+        renderMaratonView();
       });
       document.getElementById('marathonPrevBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
@@ -8199,13 +8195,13 @@
           : state.marathon.queue.length - 1;
         state.marathon.position = nextPosition;
         state.marathon.isPlaying = true;
-        syncMarathonPlayer();
+        renderMaratonView();
       });
       document.getElementById('marathonNextBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
         state.marathon.position = (state.marathon.position + 1) % state.marathon.queue.length;
         state.marathon.isPlaying = true;
-        syncMarathonPlayer();
+        renderMaratonView();
       });
       document.getElementById('marathonShuffleBtn')?.addEventListener('click', () => {
         state.marathon.shuffleEnabled = !state.marathon.shuffleEnabled;
@@ -8218,10 +8214,9 @@
           if (!Number.isFinite(selectedIndex) || selectedIndex < 0 || selectedIndex >= state.marathon.queue.length) return;
           state.marathon.position = selectedIndex;
           state.marathon.isPlaying = true;
-          syncMarathonPlayer();
+          renderMaratonView();
         });
       });
-      syncMarathonPlayer();
     }
 
     function renderRarezasView() {
@@ -8762,75 +8757,20 @@
       const mount = document.getElementById('videoPlayer');
       if (!mount) return null;
       await ensureYoutubeIframeApi();
-      if (marathonPlayer && marathonPlayerMount && marathonPlayerMount !== mount) {
-        marathonPlayer.destroy?.();
-        marathonPlayer = null;
-        marathonPlayerReady = false;
-        marathonPlayerMount = null;
-      }
-      if (marathonPlayer && marathonPlayerMount === mount && marathonPlayer.getIframe && document.body.contains(marathonPlayer.getIframe())) {
+      if (marathonPlayer && marathonPlayer.getIframe && document.body.contains(marathonPlayer.getIframe())) {
         return marathonPlayer;
       }
       marathonPlayerReady = false;
-      marathonPlayerMount = mount;
       marathonPlayer = new window.YT.Player('videoPlayer', {
         playerVars: { rel: 0, modestbranding: 1, autoplay: 1 },
         events: {
           onReady: () => { marathonPlayerReady = true; },
           onStateChange: (event) => {
-            if (event.data === window.YT.PlayerState.ENDED) {
-              if (!state.marathon.queue.length) return;
-              state.marathon.position = (state.marathon.position + 1) % state.marathon.queue.length;
-              state.marathon.isPlaying = true;
-              syncMarathonPlayer();
-            }
+            if (event.data === window.YT.PlayerState.ENDED) playNext();
           }
         }
       });
       return marathonPlayer;
-    }
-
-    function updateMarathonPlayPauseButton() {
-      const button = document.getElementById('marathonPlayPauseBtn');
-      if (button) button.textContent = state.marathon.isPlaying ? 'Pausa' : 'Play';
-    }
-
-    function updateMarathonListSelection() {
-      viewMaraton.querySelectorAll('[data-marathon-index]').forEach((button) => {
-        const itemIndex = Number(button.dataset.marathonIndex);
-        button.classList.toggle('active', itemIndex === state.marathon.position);
-      });
-    }
-
-    async function syncMarathonPlayer() {
-      if (state.view !== 'maraton') return;
-      const queue = state.marathon.queue;
-      const mount = document.getElementById('videoPlayer');
-      if (!mount || !queue.length) {
-        if (marathonPlayer && marathonPlayerMount && !document.body.contains(marathonPlayerMount)) {
-          marathonPlayer.destroy?.();
-          marathonPlayer = null;
-          marathonPlayerReady = false;
-          marathonPlayerMount = null;
-        }
-        updateMarathonPlayPauseButton();
-        updateMarathonListSelection();
-        return;
-      }
-
-      const currentVideo = queue[state.marathon.position];
-      const videoId = getYoutubeId(currentVideo?.url_youtube || currentVideo?.url_video || '');
-      if (!videoId) return;
-
-      const player = await ensureMarathonPlayer();
-      if (!player) return;
-      if (state.marathon.isPlaying) {
-        player.loadVideoById?.(videoId);
-      } else {
-        player.cueVideoById?.(videoId);
-      }
-      updateMarathonPlayPauseButton();
-      updateMarathonListSelection();
     }
 
     function finishMarathon(message = 'Maratón finalizada. No hay más videos en cola.') {
