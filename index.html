@@ -490,19 +490,37 @@
     .map-link-path {
       fill: none;
       stroke: #38c6ff;
-      stroke-width: 3.2;
+      stroke-width: var(--link-width, 3.2);
       stroke-linecap: round;
+      stroke-dasharray: var(--dash-pattern, none);
       filter:
         drop-shadow(0 0 5px rgba(76, 205, 255, .95))
         drop-shadow(0 0 11px rgba(67, 166, 255, .95))
         drop-shadow(0 0 22px rgba(53, 136, 255, .68));
-      stroke-dasharray: 6 12;
-      animation: cometFlow 1.15s linear infinite;
       opacity: .94;
+      animation: connectorGlow 1.9s ease-in-out infinite alternate, connectorFlow 5.6s linear infinite;
     }
 
-    @keyframes cometFlow {
-      to { stroke-dashoffset: -36; }
+    .map-link-path--secondary {
+      stroke: rgba(255, 56, 56, .96);
+      stroke-width: 2.1;
+      stroke-dasharray: 9 7;
+      filter:
+        drop-shadow(0 0 5px rgba(255, 78, 78, .95))
+        drop-shadow(0 0 12px rgba(255, 64, 64, .85))
+        drop-shadow(0 0 20px rgba(255, 24, 24, .68));
+      opacity: .98;
+      animation: connectorGlow 1.2s ease-in-out infinite alternate, connectorFlow 1.8s linear infinite;
+    }
+
+    @keyframes connectorGlow {
+      from { opacity: .72; }
+      to { opacity: 1; }
+    }
+
+    @keyframes connectorFlow {
+      from { stroke-dashoffset: 0; }
+      to { stroke-dashoffset: -120; }
     }
 
     .absorption-effect {
@@ -559,8 +577,8 @@
 
     /* --- INICIO NUEVO DISEÑO ORBES ESTELARES --- */
     .universe-node {
-      --w: 190px;
-      --h: 240px;
+      --w: 150px;
+      --h: 170px;
       --orb-size: 130px;
       --title-size: 0.95rem;
       position: absolute;
@@ -578,6 +596,7 @@
       animation: nodeFloat 5.8s ease-in-out infinite;
       animation-delay: var(--float-delay, 0s);
       transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      min-height: 0;
     }
 
     @keyframes nodeFloat {
@@ -588,18 +607,28 @@
     .universe-node:hover {
       transform: scale(1.15); /* Efecto de crecimiento que pediste */
       z-index: 10; /* Lo trae al frente al hacer hover */
+      border-color: transparent;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .universe-node:active,
+    .universe-node:focus-visible {
+      border-color: transparent;
+      box-shadow: none;
+      background: transparent;
     }
 
     .universe-node--universe {
-      --w: 230px;
-      --h: 292px;
+      --w: 182px;
+      --h: 206px;
       --orb-size: 164px;
       --title-size: 1.02rem;
     }
 
     .universe-node--world {
-      --w: 180px;
-      --h: 230px;
+      --w: 142px;
+      --h: 164px;
       --orb-size: 126px;
       --title-size: 0.92rem;
       z-index: 4;
@@ -673,21 +702,12 @@
     }
 
     .universe-node h3 {
-      margin: 0 0 4px 0;
+      margin: 0;
       font-size: var(--title-size);
       color: #ffffff;
       letter-spacing: 1px;
       text-transform: uppercase;
       font-weight: 800;
-    }
-
-    .universe-node p {
-      margin: 0 0 8px 0;
-      font-size: 0.75rem;
-      color: #a2c8f2;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
     }
 
     .map-world-node {
@@ -4078,8 +4098,12 @@
     const CLOUD_STORAGE_PATH = 'univoicerData/main';
     const SPECIAL_UNASSIGNED_UNIVERSE = 'Sin universo';
     const MAX_LOCAL_IMAGE_BYTES = 2 * 1024 * 1024;
-    const NODE_HALF_WIDTH = 110;
-    const NODE_HALF_HEIGHT = 93;
+    const NODE_HALF_WIDTH = 91;
+    const NODE_HALF_HEIGHT = 103;
+    const WORLD_NODE_HALF_WIDTH = 71;
+    const WORLD_NODE_HALF_HEIGHT = 82;
+    const WORLD_ORBIT_BASE_RADIUS = 190;
+    const WORLD_ORBIT_MIN_CENTER_DISTANCE = 230;
     let firebaseDb = null;
     let cloudSyncTimer = null;
     let collectionModel = {
@@ -4093,6 +4117,7 @@
     let marathonPlayer = null;
     let marathonPlayerReady = false;
     let marathonPlayerApiPromise = null;
+    let marathonPlayerMount = null;
 
     const appLayout = document.getElementById('appLayout');
     const toggleSidebar = document.getElementById('toggleSidebar');
@@ -4612,7 +4637,12 @@
         const nextParentId = getUniverseParentId(currentId);
         if (!nextParentId) return false;
         if (nextParentId === normalizedChildId) return true;
-        if (visited.has(nextParentId)) return true;
+        if (visited.has(nextParentId)) {
+          // Evita bloquear reasignaciones válidas por un ciclo preexistente
+          // en otra rama; este chequeo solo debe detectar si el hijo quedaría
+          // dentro de su propia cadena de ancestros.
+          return false;
+        }
         visited.add(nextParentId);
         currentId = nextParentId;
       }
@@ -4638,6 +4668,64 @@
         acc[childId] = parentId;
         return acc;
       }, {});
+    }
+
+    function getNodeByNormalizedUniverseName(universeName) {
+      const targetName = normalizeUniverseName(universeName);
+      if (!targetName) return null;
+      return state.universeNodes.find((node) => normalizeUniverseName(node.name) === targetName) || null;
+    }
+
+    function ensureUniverseNodeByName(universeName) {
+      const cleanName = String(universeName || '').trim();
+      if (!cleanName) return null;
+      const existing = getNodeByNormalizedUniverseName(cleanName);
+      if (existing) return existing;
+      const seed = hashCode(cleanName);
+      let placement = findPlacementForNode(state.universeNodes, state.mapCanvas, seed);
+      let safety = 0;
+      while (!placement && safety < 5) {
+        state.mapCanvas.width += 360;
+        state.mapCanvas.height += 240;
+        placement = findPlacementForNode(state.universeNodes, state.mapCanvas, seed + safety);
+        safety += 1;
+      }
+      const fallbackX = state.mapCanvas.width - 180 - (seed % 120);
+      const fallbackY = state.mapCanvas.height - 180 - ((seed >> 3) % 120);
+      const point = placement || {
+        x: Math.max(160, fallbackX),
+        y: Math.max(160, fallbackY),
+        anchorId: state.universeNodes[0]?.id
+      };
+      const nodeId = cssSafe(cleanName) || createModelId('universe', cleanName);
+      const nextNode = {
+        id: nodeId,
+        name: cleanName,
+        cover: getSafeUniverseCover(cleanName, ''),
+        x: point.x,
+        y: point.y,
+        neighbors: point.anchorId ? [point.anchorId] : [],
+        shape: createNodeShape(seed),
+        kind: 'universe',
+        parentUniverseId: '',
+        parentUniverseIds: []
+      };
+      state.universeNodes.push(nextNode);
+      if (point.anchorId) {
+        const anchor = state.universeNodes.find(node => node.id === point.anchorId);
+        if (anchor && !anchor.neighbors.includes(nodeId)) anchor.neighbors.push(nodeId);
+      }
+      return nextNode;
+    }
+
+    function getParentUniverseIdsForNode(node) {
+      if (!node) return [];
+      const fromNode = Array.isArray(node.parentUniverseIds) ? node.parentUniverseIds.map(String).map((id) => id.trim()).filter(Boolean) : [];
+      const primaryFromMembership = String(state.universeMemberships?.[node.id] || node.parentUniverseId || '').trim();
+      if (primaryFromMembership && !fromNode.includes(primaryFromMembership)) {
+        return [primaryFromMembership, ...fromNode];
+      }
+      return fromNode;
     }
 
     function saveUniverseMemberships() {
@@ -4823,7 +4911,10 @@
           neighbors: Array.isArray(node.neighbors) ? node.neighbors.filter(Boolean) : [],
           shape: node.shape || createNodeShape(hashCode(node.name)),
           kind: node.kind === 'world' ? 'world' : 'universe',
-          parentUniverseId: String(node.parentUniverseId || '').trim()
+          parentUniverseId: String(node.parentUniverseId || '').trim(),
+          parentUniverseIds: Array.isArray(node.parentUniverseIds)
+            ? [...new Set(node.parentUniverseIds.filter(Boolean).map((id) => String(id).trim()).filter(Boolean))]
+            : []
         }))
         .filter(node => node.name);
     }
@@ -4843,7 +4934,8 @@
             ...existing,
             ...node,
             cover: node.cover || existing.cover || '',
-            neighbors: [...new Set([...(existing.neighbors || []), ...(node.neighbors || [])])]
+            neighbors: [...new Set([...(existing.neighbors || []), ...(node.neighbors || [])])],
+            parentUniverseIds: [...new Set([...(existing.parentUniverseIds || []), ...(node.parentUniverseIds || [])])]
           });
         });
       });
@@ -4885,6 +4977,21 @@
       const sanitizedMemberships = normalizeUniverseMemberships(state.universeMemberships);
       const changed = JSON.stringify(sanitizedMemberships) !== JSON.stringify(state.universeMemberships || {});
       state.universeMemberships = sanitizedMemberships;
+      const validNodeIds = new Set(state.universeNodes.map((node) => String(node.id || '').trim()).filter(Boolean));
+      state.universeNodes = state.universeNodes.map((node) => {
+        const normalizedParents = getParentUniverseIdsForNode(node)
+          .filter((parentId, index, list) => parentId !== node.id && validNodeIds.has(parentId) && list.indexOf(parentId) === index);
+        const primaryParentId = String(state.universeMemberships[node.id] || '').trim();
+        const mergedParents = primaryParentId
+          ? [primaryParentId, ...normalizedParents.filter((parentId) => parentId !== primaryParentId)]
+          : normalizedParents;
+        return {
+          ...node,
+          kind: mergedParents.length ? 'world' : 'universe',
+          parentUniverseId: primaryParentId || '',
+          parentUniverseIds: mergedParents
+        };
+      });
       if (changed) saveUniverseMemberships();
     }
 
@@ -5167,11 +5274,37 @@
 
     function getUniverseBounds() {
       if (!state.universeNodes.length) return null;
-      const minX = Math.min(...state.universeNodes.map(node => node.x - NODE_HALF_WIDTH));
-      const maxX = Math.max(...state.universeNodes.map(node => node.x + NODE_HALF_WIDTH));
-      const minY = Math.min(...state.universeNodes.map(node => node.y - NODE_HALF_HEIGHT));
-      const maxY = Math.max(...state.universeNodes.map(node => node.y + NODE_HALF_HEIGHT));
+      const bounds = state.universeNodes.reduce((acc, node) => {
+        let minX = node.x - NODE_HALF_WIDTH;
+        let maxX = node.x + NODE_HALF_WIDTH;
+        let minY = node.y - NODE_HALF_HEIGHT;
+        let maxY = node.y + NODE_HALF_HEIGHT;
+        if (state.expandedUniverses.has(node.id)) {
+          const worldCount = getUniverseWorldEntries(node.name).length;
+          const orbitRadius = getWorldOrbitRadius(worldCount);
+          if (orbitRadius > 0) {
+            minX = Math.min(minX, node.x - orbitRadius - WORLD_NODE_HALF_WIDTH);
+            maxX = Math.max(maxX, node.x + orbitRadius + WORLD_NODE_HALF_WIDTH);
+            minY = Math.min(minY, node.y - orbitRadius - WORLD_NODE_HALF_HEIGHT);
+            maxY = Math.max(maxY, node.y + orbitRadius + WORLD_NODE_HALF_HEIGHT);
+          }
+        }
+        acc.minX = Math.min(acc.minX, minX);
+        acc.maxX = Math.max(acc.maxX, maxX);
+        acc.minY = Math.min(acc.minY, minY);
+        acc.maxY = Math.max(acc.maxY, maxY);
+        return acc;
+      }, { minX: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY });
+      const { minX, maxX, minY, maxY } = bounds;
       return { minX, maxX, minY, maxY };
+    }
+
+    function getWorldOrbitRadius(worldCount) {
+      if (!Number.isFinite(worldCount) || worldCount <= 0) return 0;
+      const minimumRadiusForSpacing = worldCount > 1
+        ? Math.ceil(WORLD_ORBIT_MIN_CENTER_DISTANCE / (2 * Math.sin(Math.PI / worldCount)))
+        : WORLD_ORBIT_BASE_RADIUS;
+      return Math.max(WORLD_ORBIT_BASE_RADIUS, minimumRadiusForSpacing);
     }
 
     function getUniverseCentroid() {
@@ -5242,7 +5375,8 @@
           neighbors: [],
           shape: createNodeShape(firstSeed),
           kind: 'universe',
-          parentUniverseId: ''
+          parentUniverseId: '',
+          parentUniverseIds: []
         });
       }
 
@@ -5275,7 +5409,8 @@
           neighbors: point.anchorId ? [point.anchorId] : [],
           shape: createNodeShape(seed),
           kind: 'universe',
-          parentUniverseId: ''
+          parentUniverseId: '',
+          parentUniverseIds: []
         });
 
         if (point.anchorId) {
@@ -5288,6 +5423,7 @@
       state.universeNodes.forEach(node => {
         if (node.kind !== 'world' && node.kind !== 'universe') node.kind = 'universe';
         if (typeof node.parentUniverseId !== 'string') node.parentUniverseId = '';
+        if (!Array.isArray(node.parentUniverseIds)) node.parentUniverseIds = [];
         const universeData = universeMap[normalizeUniverseName(node.name)];
         if (!node.cover && universeData) {
           node.cover = getSafeUniverseCover(node.name, getUniverseCover(universeData.videos || []));
@@ -5297,25 +5433,6 @@
       });
       sanitizeUniverseMembershipsAndPersist();
       saveUniverseNodes();
-    }
-
-    function getCharacterWorldEntries(universeName) {
-      const normalizedUniverse = normalizeUniverseName(universeName);
-      const byCharacter = new Map();
-      VIDEOS.forEach((video) => {
-        const universes = getVideoUniverses(video);
-        const belongs = universes.some((name) => normalizeUniverseName(name) === normalizedUniverse);
-        if (!belongs) return;
-        const characterName = String(video.personaje || '').trim();
-        if (!characterName) return;
-        const characterKey = normalizeName(characterName);
-        if (!characterKey) return;
-        if (!byCharacter.has(characterKey)) {
-          byCharacter.set(characterKey, { name: characterName, unlocked: false });
-        }
-        if (hasGreetingVideo(video)) byCharacter.get(characterKey).unlocked = true;
-      });
-      return [...byCharacter.values()].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
     }
 
     function getUniverseChildWorldEntries(universeName) {
@@ -5345,10 +5462,48 @@
     }
 
     function getUniverseWorldEntries(universeName) {
+      return getUniverseChildWorldEntries(universeName);
+    }
+
+    function getConnectorVariant(seedKey) {
+      const hash = Math.abs(hashCode(String(seedKey || 'connector')));
+      const curveStrength = 0.16 + ((hash % 35) / 100);
+      const arcBias = 0.24 + (((hash >> 3) % 30) / 100);
+      const twistDirection = (hash & 1) ? 1 : -1;
+      const sway = 6 + ((hash >> 6) % 18);
+      const width = (2.6 + (((hash >> 4) % 14) / 10)).toFixed(2);
+      const dashA = 24 + ((hash >> 2) % 24);
+      const dashB = 12 + ((hash >> 5) % 18);
       return {
-        characterWorldEntries: getCharacterWorldEntries(universeName),
-        universeChildWorldEntries: getUniverseChildWorldEntries(universeName)
+        curveStrength: Number(curveStrength.toFixed(3)),
+        arcBias: Number(arcBias.toFixed(3)),
+        twistDirection,
+        sway,
+        width,
+        dashPattern: `${dashA} ${dashB}`
       };
+    }
+
+    function buildConnectorPath(startX, startY, endX, endY, angle, options = {}) {
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const tangentX = dx / distance;
+      const tangentY = dy / distance;
+      const normalX = -tangentY;
+      const normalY = tangentX;
+      const curveStrength = Number.isFinite(options.curveStrength) ? options.curveStrength : 0.22;
+      const arcBias = Number.isFinite(options.arcBias) ? options.arcBias : 0.3;
+      const twistDirection = options.twistDirection === -1 ? -1 : 1;
+      const sway = Number.isFinite(options.sway) ? options.sway : 0;
+      const bendPrimary = Math.max(24, Math.min(160, distance * curveStrength));
+      const bendSecondary = Math.max(16, Math.min(120, bendPrimary * (0.68 + (arcBias * 0.45))));
+      const angleSway = Math.sin((angle || 0) * 2.2) * sway;
+      const control1X = startX + (dx * (0.24 + (arcBias * 0.14))) + (normalX * ((bendPrimary + angleSway) * twistDirection));
+      const control1Y = startY + (dy * (0.24 + (arcBias * 0.14))) + (normalY * ((bendPrimary + angleSway) * twistDirection));
+      const control2X = startX + (dx * (0.74 - (arcBias * 0.12))) - (normalX * ((bendSecondary - angleSway) * twistDirection));
+      const control2Y = startY + (dy * (0.74 - (arcBias * 0.12))) - (normalY * ((bendSecondary - angleSway) * twistDirection));
+      return `M ${Math.round(startX)} ${Math.round(startY)} C ${Math.round(control1X)} ${Math.round(control1Y)} ${Math.round(control2X)} ${Math.round(control2Y)} ${Math.round(endX)} ${Math.round(endY)}`;
     }
 
     function renderMapView() {
@@ -5372,46 +5527,62 @@
         const universeData = universes[normalizeUniverseName(node.name)] || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
         const isExpanded = state.expandedUniverses.has(node.id);
         if (isExpanded) {
-          const { characterWorldEntries, universeChildWorldEntries } = getUniverseWorldEntries(node.name);
-          const entries = [
-            ...characterWorldEntries.map((entry) => ({ ...entry, type: 'character', worldKey: `character:${normalizeUniverseName(entry.name)}` })),
-            ...universeChildWorldEntries.map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }))
-          ];
-          const baseRadius = 190;
-          const minArc = 155;
-          const dynamicRadius = Math.max(baseRadius, Math.ceil((entries.length * minArc) / (Math.PI * 2)));
-          const ringCapacity = Math.max(1, Math.floor((Math.PI * 2 * dynamicRadius) / minArc));
+          const entries = getUniverseWorldEntries(node.name)
+            .map((entry) => ({ ...entry, type: 'universe-child', worldKey: `universe-child:${entry.id || normalizeUniverseName(entry.name)}` }));
+          const worldCount = entries.length;
+          const orbitRadius = getWorldOrbitRadius(worldCount);
+          const startAngle = ((Math.abs(hashCode(`${node.id}-${worldCount}`)) % 360) * Math.PI) / 180;
           entries.forEach((entry, index) => {
-            const ringIndex = Math.floor(index / ringCapacity);
-            const indexInRing = index % ringCapacity;
-            const ringCount = Math.max(1, Math.ceil(entries.length / ringCapacity));
-            const pointsInRing = ringIndex === ringCount - 1
-              ? (entries.length - (ringIndex * ringCapacity)) || ringCapacity
-              : ringCapacity;
-            const angleOffset = (ringIndex % 2) * (Math.PI / Math.max(4, pointsInRing));
-            const angle = angleOffset + (Math.PI * 2 * indexInRing) / Math.max(1, pointsInRing);
-            const orbitRadius = dynamicRadius + (ringIndex * 165);
+            const angle = startAngle + ((Math.PI * 2 * index) / Math.max(1, worldCount));
             const worldX = Math.round(node.x + Math.cos(angle) * orbitRadius);
             const worldY = Math.round(node.y + Math.sin(angle) * orbitRadius);
-            const safeX = Math.max(16, Math.min(state.mapCanvas.width - 180, worldX - 90));
-            const safeY = Math.max(16, Math.min(state.mapCanvas.height - 230, worldY - 115));
+            const safeX = Math.round(worldX - WORLD_NODE_HALF_WIDTH);
+            const safeY = Math.round(worldY - WORLD_NODE_HALF_HEIGHT);
             const safeWorldName = escapeHtml(entry.name);
-            const stats = entry.stats || { totalCharacters: 0, unlockedCharacters: 0, completion: 0, state: 'incomplete' };
             const floatDelay = ((Math.abs(hashCode(`${entry.id || entry.name}-${index}`)) % 24) / 10).toFixed(1);
-            const worldCenterX = safeX + 90;
-            const worldCenterY = safeY + 65;
-            const bendPull = Math.max(28, Math.min(92, orbitRadius * 0.22));
-            const controlX = ((node.x + worldCenterX) / 2) + (Math.cos(angle) * bendPull);
-            const controlY = ((node.y + worldCenterY) / 2) + (Math.sin(angle) * bendPull);
+            const worldCenterX = worldX;
+            const worldCenterY = worldY;
+            const baseDx = Math.round(worldCenterX - node.x);
+            const baseDy = Math.round(worldCenterY - node.y);
+            const connectorVariant = getConnectorVariant(`${node.id}:${entry.worldKey}`);
+            const connectorPath = buildConnectorPath(node.x, node.y, worldCenterX, worldCenterY, angle, connectorVariant);
             worldLinks.push(`
               <path
                 class="map-link-path"
                 data-parent-id="${node.id}"
                 data-world-key="${entry.worldKey}"
                 data-base-angle="${angle.toFixed(4)}"
-                d="M ${node.x} ${node.y} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(worldCenterX)} ${Math.round(worldCenterY)}"
+                data-curve-strength="${connectorVariant.curveStrength}"
+                data-arc-bias="${connectorVariant.arcBias}"
+                data-twist-direction="${connectorVariant.twistDirection}"
+                data-sway="${connectorVariant.sway}"
+                style="--link-width:${connectorVariant.width}; --dash-pattern:${connectorVariant.dashPattern};"
+                d="${connectorPath}"
               ></path>
             `);
+            const childNode = state.universeNodes.find((item) => item.id === entry.id);
+            const parentUniverseIds = getParentUniverseIdsForNode(childNode);
+            const secondaryParentIds = parentUniverseIds.filter((parentId) => parentId !== node.id);
+            secondaryParentIds.forEach((secondaryParentId, secondaryIndex) => {
+              const secondaryParent = state.universeNodes.find((item) => item.id === secondaryParentId);
+              if (!secondaryParent) return;
+              const bridgeAngle = Math.atan2(secondaryParent.y - worldCenterY, secondaryParent.x - worldCenterX);
+              const bridgeVariant = getConnectorVariant(`${entry.worldKey}:${secondaryParentId}:${secondaryIndex}`);
+              const bridgePath = buildConnectorPath(worldCenterX, worldCenterY, secondaryParent.x, secondaryParent.y, bridgeAngle, {
+                ...bridgeVariant,
+                curveStrength: Math.max(0.12, bridgeVariant.curveStrength * 0.75),
+                arcBias: Math.max(0.16, bridgeVariant.arcBias * 0.7),
+                sway: Math.max(2, Math.round(bridgeVariant.sway * 0.5))
+              });
+              worldLinks.push(`
+                <path
+                  class="map-link-path map-link-path--secondary"
+                  data-parent-id="${node.id}"
+                  data-world-key="${entry.worldKey}:secondary:${secondaryParentId}"
+                  d="${bridgePath}"
+                ></path>
+              `);
+            });
             worldNodes.push(`
               <button
                 class="universe-node universe-node--world"
@@ -5420,6 +5591,8 @@
                 data-world-key="${entry.worldKey}"
                 data-parent-id="${node.id}"
                 data-base-angle="${angle.toFixed(4)}"
+                data-base-dx="${baseDx}"
+                data-base-dy="${baseDy}"
                 data-locked="${entry.unlocked ? '0' : '1'}"
                 style="left:${safeX}px; top:${safeY}px; --float-delay:-${floatDelay}s;"
               >
@@ -5429,13 +5602,6 @@
                 </div>
                 <div class="node-info">
                   <h3>${safeWorldName}</h3>
-                  <p>${stats.unlockedCharacters}/${stats.totalCharacters} PERSONAJES</p>
-                  <span class="completion-badge completion-badge--${stats.state}">
-                    ${stats.state === 'complete' ? 'COMPLETO' : stats.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
-                  </span>
-                  <span class="completion-track" aria-hidden="true">
-                    <span class="completion-fill completion-fill--${stats.state}" style="width:${stats.completion}%;"></span>
-                  </span>
                 </div>
               </button>
             `);
@@ -5451,13 +5617,6 @@
             </div>
             <div class="node-info">
               <h3>${safeName}</h3>
-              <p>${universeData.unlockedCharacters}/${universeData.totalCharacters} PERSONAJES</p>
-              <span class="completion-badge completion-badge--${universeData.state}">
-                ${universeData.state === 'complete' ? 'COMPLETO' : universeData.state === 'advanced' ? 'AVANZADO' : 'INCOMPLETO'}
-              </span>
-              <span class="completion-track" aria-hidden="true">
-                <span class="completion-fill completion-fill--${universeData.state}" style="width:${universeData.completion}%;"></span>
-              </span>
             </div>
           </button>
         `;
@@ -5465,7 +5624,7 @@
       viewMap.innerHTML = `
         <div class="universe-map-shell">
           <div class="map-toolbar">
-            <button type="button" id="undoAllAbsorptions" class="neon-btn map-reset-btn" aria-label="Deshacer todas las absorciones">↺ Deshacer absorciones</button>
+            <button type="button" id="undoAllAbsorptions" class="neon-btn map-reset-btn" aria-label="Explosión Big Bang">💥 Explosión Big Bang</button>
           </div>
           <div id="universeMapCanvas" aria-label="Mapa de universos explorable">
             <div class="map-nebula-layer" aria-hidden="true"></div>
@@ -5696,38 +5855,44 @@
         });
       };
 
-      const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle, stretch = 1) => {
+      const updateConnectorPath = (pathEl, startX, startY, endX, endY, angle) => {
         if (!pathEl) return;
-        const safeStretch = Math.max(1, stretch || 1);
-        const bendPull = Math.max(30, Math.min(130, Math.hypot(endX - startX, endY - startY) * 0.22 * safeStretch));
-        const controlX = ((startX + endX) / 2) + (Math.cos(angle) * bendPull);
-        const controlY = ((startY + endY) / 2) + (Math.sin(angle) * bendPull);
-        pathEl.setAttribute('d', `M ${Math.round(startX)} ${Math.round(startY)} Q ${Math.round(controlX)} ${Math.round(controlY)} ${Math.round(endX)} ${Math.round(endY)}`);
+        const curveStrength = Number.parseFloat(pathEl.dataset.curveStrength || '');
+        const arcBias = Number.parseFloat(pathEl.dataset.arcBias || '');
+        const twistDirection = Number.parseInt(pathEl.dataset.twistDirection || '1', 10);
+        const sway = Number.parseFloat(pathEl.dataset.sway || '');
+        const path = buildConnectorPath(startX, startY, endX, endY, angle, {
+          curveStrength: Number.isFinite(curveStrength) ? curveStrength : 0.22,
+          arcBias: Number.isFinite(arcBias) ? arcBias : 0.3,
+          twistDirection: twistDirection === -1 ? -1 : 1,
+          sway: Number.isFinite(sway) ? sway : 0
+        });
+        pathEl.setAttribute('d', path);
       };
 
-      const updateExpandedWorldsForParent = (parentNodeId, dragMagnitude = 0) => {
+      const updateExpandedWorldsForParent = (parentNodeId) => {
         if (!parentNodeId || !state.expandedUniverses.has(parentNodeId)) return;
         const parentNode = state.universeNodes.find((item) => item.id === parentNodeId);
         if (!parentNode) return;
         const worldEls = [...viewMap.querySelectorAll(`.universe-node--world[data-parent-id="${parentNodeId}"]`)];
-        const stretch = 1 + Math.min(0.38, dragMagnitude / 380);
         worldEls.forEach((worldEl) => {
           const baseAngle = Number.parseFloat(worldEl.dataset.baseAngle || '0');
-          const worldRectX = Number.parseFloat(worldEl.style.left || '0');
-          const worldRectY = Number.parseFloat(worldEl.style.top || '0');
-          if (!Number.isFinite(baseAngle) || !Number.isFinite(worldRectX) || !Number.isFinite(worldRectY)) return;
-          const centerX = worldRectX + 90;
-          const centerY = worldRectY + 65;
-          const dx = centerX - parentNode.x;
-          const dy = centerY - parentNode.y;
-          const radius = Math.hypot(dx, dy) || 1;
-          const targetCenterX = parentNode.x + (Math.cos(baseAngle) * radius * stretch);
-          const targetCenterY = parentNode.y + (Math.sin(baseAngle) * radius * stretch);
-          worldEl.style.left = `${Math.round(targetCenterX - 90)}px`;
-          worldEl.style.top = `${Math.round(targetCenterY - 65)}px`;
+          const baseDx = Number.parseFloat(worldEl.dataset.baseDx || '');
+          const baseDy = Number.parseFloat(worldEl.dataset.baseDy || '');
+          if (!Number.isFinite(baseAngle)) return;
+          const fallbackWorldRectX = Number.parseFloat(worldEl.style.left || '0');
+          const fallbackWorldRectY = Number.parseFloat(worldEl.style.top || '0');
+          const dx = Number.isFinite(baseDx) ? baseDx : (fallbackWorldRectX + WORLD_NODE_HALF_WIDTH - parentNode.x);
+          const dy = Number.isFinite(baseDy) ? baseDy : (fallbackWorldRectY + WORLD_NODE_HALF_HEIGHT - parentNode.y);
+          const targetCenterX = parentNode.x + dx;
+          const targetCenterY = parentNode.y + dy;
+          worldEl.dataset.baseDx = `${Math.round(dx)}`;
+          worldEl.dataset.baseDy = `${Math.round(dy)}`;
+          worldEl.style.left = `${Math.round(targetCenterX - WORLD_NODE_HALF_WIDTH)}px`;
+          worldEl.style.top = `${Math.round(targetCenterY - WORLD_NODE_HALF_HEIGHT)}px`;
           const worldKey = worldEl.dataset.worldKey || '';
           const pathEl = viewMap.querySelector(`.map-link-path[data-parent-id="${parentNodeId}"][data-world-key="${worldKey}"]`);
-          updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle, stretch);
+          updateConnectorPath(pathEl, parentNode.x, parentNode.y, targetCenterX, targetCenterY, baseAngle);
         });
       };
 
@@ -5793,7 +5958,7 @@
           node.y = boundedY;
           nodeEl.style.left = `${boundedX - NODE_HALF_WIDTH}px`;
           nodeEl.style.top = `${boundedY - NODE_HALF_HEIGHT}px`;
-          updateExpandedWorldsForParent(node.id, Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY));
+          updateExpandedWorldsForParent(node.id);
           const movedDistance = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
           if (!dragState.moved && movedDistance >= DRAG_OPEN_THRESHOLD) {
             dragState.moved = true;
@@ -5835,6 +6000,8 @@
                 if (activeNode.parentUniverseId !== targetNodeId) {
                   activeNode.parentUniverseId = targetNodeId;
                 }
+                const existingParents = getParentUniverseIdsForNode(activeNode).filter((parentId) => parentId !== targetNodeId);
+                activeNode.parentUniverseIds = [targetNodeId, ...existingParents];
                 if (targetNode) {
                   const dx = targetNode.x - activeNode.x;
                   const dy = targetNode.y - activeNode.y;
@@ -5875,8 +6042,26 @@
           }
           event.stopPropagation();
           const clickedNodeId = nodeEl.dataset.nodeId || '';
-          if (state.expandedUniverses.has(clickedNodeId)) state.expandedUniverses.delete(clickedNodeId);
-          else state.expandedUniverses.add(clickedNodeId);
+          if (state.expandedUniverses.has(clickedNodeId)) {
+            state.expandedUniverses.delete(clickedNodeId);
+          } else {
+            state.expandedUniverses.add(clickedNodeId);
+            const clickedNode = state.universeNodes.find((item) => item.id === clickedNodeId);
+            if (clickedNode) {
+              const orbitRadius = getWorldOrbitRadius(getUniverseWorldEntries(clickedNode.name).length);
+              if (orbitRadius > 0) {
+                const marginX = orbitRadius + WORLD_NODE_HALF_WIDTH;
+                const marginY = orbitRadius + WORLD_NODE_HALF_HEIGHT;
+                const boundedX = Math.max(marginX, Math.min(clickedNode.x, state.mapCanvas.width - marginX));
+                const boundedY = Math.max(marginY, Math.min(clickedNode.y, state.mapCanvas.height - marginY));
+                if (boundedX !== clickedNode.x || boundedY !== clickedNode.y) {
+                  clickedNode.x = Math.round(boundedX);
+                  clickedNode.y = Math.round(boundedY);
+                  saveUniverseNodes();
+                }
+              }
+            }
+          }
           renderMapView();
         });
       });
@@ -5892,16 +6077,11 @@
           event.stopPropagation();
           const worldName = worldEl.dataset.worldName;
           if (!worldName) return;
-          const worldType = worldEl.dataset.worldType || 'character';
-          if (worldType === 'universe-child') {
-            state.universe = worldName;
-            state.selectedVideoId = null;
-            state.showAddForm = false;
-            state.showEditUniverseForm = false;
-            changeView('universe');
-            return;
-          }
-          openCharacterProfile(worldName);
+          state.universe = worldName;
+          state.selectedVideoId = null;
+          state.showAddForm = false;
+          state.showEditUniverseForm = false;
+          changeView('universe');
         });
       });
 
@@ -5910,12 +6090,83 @@
         undoAllAbsorptionsBtn.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          state.universeMemberships = {};
-          state.universeNodes = (state.universeNodes || []).map((node) => ({
-            ...node,
-            kind: 'universe',
-            parentUniverseId: ''
-          }));
+
+          const currentMemberships = state.universeMemberships || {};
+          const parentsWithAbsorptions = [...new Set(
+            Object.values(currentMemberships)
+              .map((parentId) => String(parentId || '').trim())
+              .filter(Boolean)
+          )];
+          if (!parentsWithAbsorptions.length) {
+            alert('No hay absorciones para disolver.');
+            return;
+          }
+
+          const availableUniverseNames = parentsWithAbsorptions
+            .map((parentId) => state.universeNodes.find((node) => node.id === parentId)?.name || '')
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+          if (!availableUniverseNames.length) {
+            alert('No se encontraron universos con absorciones activas.');
+            return;
+          }
+
+          const promptMessage = [
+            'Elige el universo para ejecutar la Explosión Big Bang:',
+            ...availableUniverseNames.map((name, idx) => `${idx + 1}. ${name}`)
+          ].join('\n');
+          const selection = window.prompt(promptMessage, availableUniverseNames[0] || '');
+          if (selection === null) return;
+
+          const normalizedSelection = normalizeUniverseName(selection);
+          const selectedByIndex = Number.parseInt(selection, 10);
+          const selectedUniverseName = Number.isInteger(selectedByIndex) && selectedByIndex >= 1 && selectedByIndex <= availableUniverseNames.length
+            ? availableUniverseNames[selectedByIndex - 1]
+            : availableUniverseNames.find((name) => normalizeUniverseName(name) === normalizedSelection);
+
+          if (!selectedUniverseName) {
+            alert('No se reconoció ese universo. Intenta de nuevo con el nombre o número de la lista.');
+            return;
+          }
+
+          const selectedUniverseNode = state.universeNodes.find(
+            (node) => normalizeUniverseName(node.name) === normalizeUniverseName(selectedUniverseName)
+          );
+          if (!selectedUniverseNode) {
+            alert('No se pudo encontrar el universo seleccionado.');
+            return;
+          }
+
+          let dissolutions = 0;
+          const nextMemberships = {};
+          Object.entries(currentMemberships).forEach(([childId, parentId]) => {
+            if (String(parentId || '') === selectedUniverseNode.id) {
+              dissolutions += 1;
+              return;
+            }
+            nextMemberships[childId] = parentId;
+          });
+
+          if (!dissolutions) {
+            alert(`"${selectedUniverseName}" no tiene absorciones activas.`);
+            return;
+          }
+
+          state.universeMemberships = nextMemberships;
+          state.universeNodes = (state.universeNodes || []).map((node) => {
+            const parentId = state.universeMemberships[node.id] || '';
+            const parentIds = getParentUniverseIdsForNode(node).filter((item) => item !== selectedUniverseNode.id);
+            const normalizedParentIds = parentId
+              ? [parentId, ...parentIds.filter((item) => item !== parentId)]
+              : parentIds;
+            return {
+              ...node,
+              kind: normalizedParentIds.length ? 'world' : 'universe',
+              parentUniverseId: parentId,
+              parentUniverseIds: normalizedParentIds
+            };
+          });
           state.mapAbsorptionEffect = null;
           saveUniverseMemberships();
           saveUniverseNodes();
@@ -6083,6 +6334,12 @@
         }))
         .sort((a, b) => a.characterName.localeCompare(b.characterName, 'es', { sensitivity: 'base' }));
       const universeNode = state.universeNodes.find(node => normalizeUniverseName(node.name) === selectedUniverseKey);
+      const linkedUniverseNames = getParentUniverseIdsForNode(universeNode)
+        .map((parentId) => state.universeNodes.find((node) => node.id === parentId)?.name || '')
+        .filter(Boolean);
+      const parentUniverseOptions = state.universeNodes
+        .filter((node) => node.id !== universeNode?.id && String(node.kind || 'universe') === 'universe')
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }));
       const headerCover = getSafeUniverseCover(state.universe, universeNode?.cover || getUniverseCover(videos));
       const progressVisual = getProgressVisual(universeData.completion);
       const editFeedbackText = state.editUniverseFeedback?.text || '';
@@ -6146,6 +6403,18 @@
                     value="${escapeHtml(state.universe || '')}"
                     placeholder="Ej. Dragon Ball"
                   >
+                </label>
+                <label>Universos padre vinculados
+                  <select name="universosLigados" multiple size="${Math.max(3, Math.min(8, parentUniverseOptions.length || 3))}">
+                    ${parentUniverseOptions.length
+                      ? parentUniverseOptions.map((node) => `
+                        <option value="${escapeHtml(node.name || '')}" ${linkedUniverseNames.some((name) => normalizeUniverseName(name) === normalizeUniverseName(node.name)) ? 'selected' : ''}>
+                          ${escapeHtml(node.name || '')}
+                        </option>
+                      `).join('')
+                      : '<option value="" disabled>No hay universos padre disponibles</option>'}
+                  </select>
+                  <span class="muted">Solo se muestran universos padre. Mantén Ctrl/Cmd para seleccionar varios.</span>
                 </label>
                 <label>Portada</label>
                 <div class="cover-mode" role="group" aria-label="Selector de portada de edición">
@@ -6307,6 +6576,12 @@
         event.preventDefault();
         const formData = new FormData(editUniverseForm);
         const cleanName = String(formData.get('nombreUniverso') || '').trim();
+        const linkedUniverseNames = [...new Set(
+          formData
+            .getAll('universosLigados')
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+        )];
         if (!cleanName) {
           state.editUniverseFeedback = { type: 'error', text: 'El nombre del universo es obligatorio.' };
           renderUniverseView();
@@ -6345,9 +6620,39 @@
         if (universeNode) {
           universeNode.name = cleanName;
           universeNode.cover = nextCover || '';
+          if (linkedUniverseNames.length) {
+            const parentUniverseIds = linkedUniverseNames
+              .map((linkedName) => state.universeNodes.find((node) =>
+                node.id !== universeNode.id
+                && String(node.kind || 'universe') === 'universe'
+                && normalizeUniverseName(node.name) === normalizeUniverseName(linkedName)
+              ))
+              .filter(Boolean)
+              .map((node) => node.id)
+              .filter((parentId) => parentId !== universeNode.id);
+            const primaryParentId = parentUniverseIds[0] || '';
+            if (primaryParentId) {
+              state.universeMemberships[universeNode.id] = primaryParentId;
+              universeNode.kind = 'world';
+            } else {
+              delete state.universeMemberships[universeNode.id];
+              universeNode.kind = 'universe';
+            }
+            universeNode.parentUniverseId = primaryParentId;
+            universeNode.parentUniverseIds = primaryParentId
+              ? [primaryParentId, ...parentUniverseIds.filter((id) => id !== primaryParentId)]
+              : [];
+          } else {
+            delete state.universeMemberships[universeNode.id];
+            universeNode.parentUniverseId = '';
+            universeNode.parentUniverseIds = [];
+            universeNode.kind = 'universe';
+          }
         }
         state.universe = cleanName;
         state.editUniverseFeedback = { type: 'success', text: 'Universo actualizado correctamente.' };
+        sanitizeUniverseMembershipsAndPersist();
+        saveUniverseMemberships();
         saveUniverseNodes();
         saveVideos();
         renderMapView();
@@ -6357,13 +6662,35 @@
         const ok = confirm(`¿Eliminar universo "${state.universe}"? Se quitará de los videos relacionados.`);
         if (!ok) return;
         const currentUniverseKey = normalizeUniverseName(state.universe || '');
-        state.universeNodes = state.universeNodes.filter(node => normalizeUniverseName(node.name) !== currentUniverseKey);
+        const removedNode = state.universeNodes.find(node => normalizeUniverseName(node.name) === currentUniverseKey);
+        state.universeNodes = state.universeNodes.filter(node => normalizeUniverseName(node.name) !== currentUniverseKey)
+          .map((node) => {
+            const parentIds = getParentUniverseIdsForNode(node).filter((id) => id !== removedNode?.id);
+            const primaryParentId = String(state.universeMemberships[node.id] || '').trim();
+            const normalizedParentIds = primaryParentId
+              ? [primaryParentId, ...parentIds.filter((id) => id !== primaryParentId)]
+              : parentIds;
+            return {
+              ...node,
+              parentUniverseIds: normalizedParentIds,
+              parentUniverseId: primaryParentId || '',
+              kind: normalizedParentIds.length ? 'world' : 'universe'
+            };
+          });
+        if (removedNode?.id) {
+          delete state.universeMemberships[removedNode.id];
+          Object.keys(state.universeMemberships).forEach((childId) => {
+            if (state.universeMemberships[childId] === removedNode.id) delete state.universeMemberships[childId];
+          });
+        }
         VIDEOS.forEach(video => {
           video.universo = getVideoUniverses(video).filter(name => normalizeUniverseName(name) !== currentUniverseKey);
         });
         for (let i = VIDEOS.length - 1; i >= 0; i -= 1) {
           if (!getVideoUniverses(VIDEOS[i]).length) VIDEOS.splice(i, 1);
         }
+        sanitizeUniverseMembershipsAndPersist();
+        saveUniverseMemberships();
         saveUniverseNodes();
         saveVideos();
         state.universe = null;
@@ -7805,9 +8132,6 @@
         `<option value="${playlist.id}" ${playlist.id === marathon.activePlaylistId ? 'selected' : ''}>${playlist.name}</option>`
       )).join('');
       const currentVideo = marathon.queue[marathon.position] || null;
-      const embedUrl = currentVideo
-        ? toEmbedUrl(currentVideo.url_youtube || currentVideo.url_video || '', marathon.isPlaying ? 1 : 0)
-        : '';
       viewMaraton.innerHTML = `
         <section class="marathon">
           <header class="marathon-header">
@@ -7821,8 +8145,8 @@
                 ${playlistOptions}
               </select>
               <div class="marathon-player-shell">
-                ${embedUrl
-                  ? `<iframe src="${embedUrl}" title="${escapeHtml(currentVideo?.titulo || 'Reproductor de maratón')}" allow="autoplay; encrypted-media" allowfullscreen></iframe>`
+                ${currentVideo
+                  ? '<div id="videoPlayer"></div>'
                   : '<div class="marathon-empty">No hay videos disponibles para esta playlist.</div>'}
               </div>
               <div class="marathon-controls">
@@ -7859,8 +8183,14 @@
       });
       document.getElementById('marathonPlayPauseBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
-        state.marathon.isPlaying = !state.marathon.isPlaying;
-        renderMaratonView();
+        if (state.marathon.isPlaying) {
+          state.marathon.isPlaying = false;
+          if (marathonPlayerReady && marathonPlayer?.pauseVideo) marathonPlayer.pauseVideo();
+        } else {
+          state.marathon.isPlaying = true;
+          if (marathonPlayerReady && marathonPlayer?.playVideo) marathonPlayer.playVideo();
+        }
+        updateMarathonPlayPauseButton();
       });
       document.getElementById('marathonPrevBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
@@ -7869,13 +8199,13 @@
           : state.marathon.queue.length - 1;
         state.marathon.position = nextPosition;
         state.marathon.isPlaying = true;
-        renderMaratonView();
+        syncMarathonPlayer();
       });
       document.getElementById('marathonNextBtn')?.addEventListener('click', () => {
         if (!state.marathon.queue.length) return;
         state.marathon.position = (state.marathon.position + 1) % state.marathon.queue.length;
         state.marathon.isPlaying = true;
-        renderMaratonView();
+        syncMarathonPlayer();
       });
       document.getElementById('marathonShuffleBtn')?.addEventListener('click', () => {
         state.marathon.shuffleEnabled = !state.marathon.shuffleEnabled;
@@ -7888,9 +8218,10 @@
           if (!Number.isFinite(selectedIndex) || selectedIndex < 0 || selectedIndex >= state.marathon.queue.length) return;
           state.marathon.position = selectedIndex;
           state.marathon.isPlaying = true;
-          renderMaratonView();
+          syncMarathonPlayer();
         });
       });
+      syncMarathonPlayer();
     }
 
     function renderRarezasView() {
@@ -8434,20 +8765,75 @@
       const mount = document.getElementById('videoPlayer');
       if (!mount) return null;
       await ensureYoutubeIframeApi();
-      if (marathonPlayer && marathonPlayer.getIframe && document.body.contains(marathonPlayer.getIframe())) {
+      if (marathonPlayer && marathonPlayerMount && marathonPlayerMount !== mount) {
+        marathonPlayer.destroy?.();
+        marathonPlayer = null;
+        marathonPlayerReady = false;
+        marathonPlayerMount = null;
+      }
+      if (marathonPlayer && marathonPlayerMount === mount && marathonPlayer.getIframe && document.body.contains(marathonPlayer.getIframe())) {
         return marathonPlayer;
       }
       marathonPlayerReady = false;
+      marathonPlayerMount = mount;
       marathonPlayer = new window.YT.Player('videoPlayer', {
         playerVars: { rel: 0, modestbranding: 1, autoplay: 1 },
         events: {
           onReady: () => { marathonPlayerReady = true; },
           onStateChange: (event) => {
-            if (event.data === window.YT.PlayerState.ENDED) nextInMarathon();
+            if (event.data === window.YT.PlayerState.ENDED) {
+              if (!state.marathon.queue.length) return;
+              state.marathon.position = (state.marathon.position + 1) % state.marathon.queue.length;
+              state.marathon.isPlaying = true;
+              syncMarathonPlayer();
+            }
           }
         }
       });
       return marathonPlayer;
+    }
+
+    function updateMarathonPlayPauseButton() {
+      const button = document.getElementById('marathonPlayPauseBtn');
+      if (button) button.textContent = state.marathon.isPlaying ? 'Pausa' : 'Play';
+    }
+
+    function updateMarathonListSelection() {
+      viewMaraton.querySelectorAll('[data-marathon-index]').forEach((button) => {
+        const itemIndex = Number(button.dataset.marathonIndex);
+        button.classList.toggle('active', itemIndex === state.marathon.position);
+      });
+    }
+
+    async function syncMarathonPlayer() {
+      if (state.view !== 'maraton') return;
+      const queue = state.marathon.queue;
+      const mount = document.getElementById('videoPlayer');
+      if (!mount || !queue.length) {
+        if (marathonPlayer && marathonPlayerMount && !document.body.contains(marathonPlayerMount)) {
+          marathonPlayer.destroy?.();
+          marathonPlayer = null;
+          marathonPlayerReady = false;
+          marathonPlayerMount = null;
+        }
+        updateMarathonPlayPauseButton();
+        updateMarathonListSelection();
+        return;
+      }
+
+      const currentVideo = queue[state.marathon.position];
+      const videoId = getYoutubeId(currentVideo?.url_youtube || currentVideo?.url_video || '');
+      if (!videoId) return;
+
+      const player = await ensureMarathonPlayer();
+      if (!player) return;
+      if (state.marathon.isPlaying) {
+        player.loadVideoById?.(videoId);
+      } else {
+        player.cueVideoById?.(videoId);
+      }
+      updateMarathonPlayPauseButton();
+      updateMarathonListSelection();
     }
 
     function finishMarathon(message = 'Maratón finalizada. No hay más videos en cola.') {
