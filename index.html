@@ -5091,15 +5091,15 @@
         videoIds: Object.freeze(sortedPlayableVideos.map((video) => video.id))
       });
       state.marathon.playlists = [AUTO_MARATHON_PLAYLIST];
-      const playlistExists = state.marathon.playlists.some((playlist) => playlist.id === state.marathon.selectedPlaylistId);
+      const playlistExists = state.marathon.playlists.some((playlist) => playlist.id === state.marathon.activePlaylistId);
       if (!playlistExists) {
-        state.marathon.selectedPlaylistId = AUTO_MARATHON_PLAYLIST.id;
+        state.marathon.activePlaylistId = AUTO_MARATHON_PLAYLIST.id;
       }
       return AUTO_MARATHON_PLAYLIST;
     }
 
     function getMarathonQueue() {
-      const selectedPlaylistId = state.marathon.selectedPlaylistId || AUTO_MARATHON_PLAYLIST.id;
+      const selectedPlaylistId = state.marathon.activePlaylistId || AUTO_MARATHON_PLAYLIST.id;
       if (selectedPlaylistId === AUTO_MARATHON_PLAYLIST.id) {
         return AUTO_MARATHON_PLAYLIST.videoIds
           .map((videoId) => VIDEOS.find((video) => video.id === videoId))
@@ -8754,8 +8754,11 @@
       return marathonPlayerApiPromise;
     }
 
+    const MARATHON_FALLBACK_MS = 0;
+
     function clearMarathonFallbackTimer() {
       clearTimeout(window.__marathonFallback);
+      window.__marathonFallback = null;
     }
 
     async function ensureMarathonPlayer() {
@@ -8834,8 +8837,7 @@
     }
 
     function finishMarathon(message = 'Maratón finalizada. No hay más videos en cola.') {
-      state.marathon.active = false;
-      state.marathon.finished = true;
+      state.marathon.isPlaying = false;
       clearMarathonFallbackTimer();
       if (marathonPlayerReady && marathonPlayer?.stopVideo) marathonPlayer.stopVideo();
       updateMarathonLabel(message);
@@ -8843,9 +8845,10 @@
 
     function startMarathon() {
       const queue = getMarathonQueue();
-      if (!queue.length) return;
-      state.marathon.playlists = [{ id: 'auto', name: 'Automática', videos: queue }];
-      state.marathon.activePlaylistId = 'auto';
+      if (!queue.length) {
+        finishMarathon('No hay videos para iniciar la maratón.');
+        return;
+      }
       state.marathon.queue = state.marathon.shuffleEnabled ? shuffleVideos(queue) : [...queue];
       state.marathon.position = 0;
       state.marathon.isPlaying = true;
@@ -8854,73 +8857,51 @@
       updateMarathonLabel();
     }
 
-    async function nextInMarathon() {  // <-- 1. Agrega 'async' aquí
+    async function nextInMarathon() {
+      const { queue, position } = state.marathon;
       if (!state.marathon.isPlaying) return;
-      if (state.marathon.position >= state.marathon.queue.length - 1) {
-        state.marathon.isPlaying = false;
-        updateMarathonLabel('Maratón finalizado.');
+      if (!Array.isArray(queue) || !queue.length) {
+        finishMarathon('Maratón finalizada. Cola vacía.');
+        return;
+      }
+      if (position >= queue.length - 1) {
+        finishMarathon('Maratón finalizado.');
+        return;
+      }
+
+      state.marathon.position = position + 1;
+      const current = state.marathon.queue[state.marathon.position];
+      if (!current) {
+        finishMarathon('Maratón finalizada. No se encontró el siguiente video.');
         return;
       }
       state.selectedVideoId = current.id;
       if (state.view === 'universe') renderUniverseView();
       updateMarathonLabel();
-    
-      const player = await ensureMarathonPlayer(); // <-- 2. Ahora este await funcionará sin dar error
+
+      const player = await ensureMarathonPlayer();
       if (!player) return;
-      if (player.loadVideoById) player.loadVideoById(currentId); 
+      const youtubeId = getYoutubeId(current.url_youtube || current.url_video || '');
+      if (!youtubeId) return;
+      if (player.loadVideoById) player.loadVideoById(youtubeId);
       attachPlayerEndedHandler();
     }
 
-    function pickRandomUnplayedIndex() {
-      const played = new Set(state.marathon.history);
-      const options = state.marathon.queue
-        .map((_, index) => index)
-        .filter((index) => !played.has(index));
-      if (!options.length) return -1;
-      return options[Math.floor(Math.random() * options.length)];
-    }
-
     function playNext() {
-      if (!state.marathon.active) return;
-      const { queue, shuffleEnabled } = state.marathon;
-      if (!queue.length) {
-        finishMarathon();
-        return;
-      }
-
-      if (shuffleEnabled) {
-        const nextIndex = pickRandomUnplayedIndex();
-        if (nextIndex < 0) {
-          finishMarathon();
-          return;
-        }
-        state.marathon.position = nextIndex;
-      } else if (state.marathon.position >= queue.length - 1) {
-        finishMarathon();
-        return;
-      } else {
-        state.marathon.position += 1;
-      }
-
-      if (state.marathon.history[state.marathon.history.length - 1] !== state.marathon.position) {
-        state.marathon.history.push(state.marathon.position);
-      }
-      playCurrent();
+      if (!state.marathon.isPlaying) return;
+      nextInMarathon();
     }
 
     function playPrevious() {
-      if (!state.marathon.active) return;
-      if (state.marathon.history.length > 1) {
-        state.marathon.history.pop();
-        state.marathon.position = state.marathon.history[state.marathon.history.length - 1];
-        playCurrent();
-        return;
-      }
-      if (state.marathon.position > 0) {
-        state.marathon.position -= 1;
-        state.marathon.history = [state.marathon.position];
-        playCurrent();
-      }
+      if (!state.marathon.isPlaying || !state.marathon.queue.length) return;
+      const previousPosition = state.marathon.position > 0
+        ? state.marathon.position - 1
+        : state.marathon.queue.length - 1;
+      state.marathon.position = previousPosition;
+      const current = state.marathon.queue[state.marathon.position];
+      state.selectedVideoId = current?.id || null;
+      if (state.view === 'universe') renderUniverseView();
+      updateMarathonLabel();
     }
 
     function togglePause() {
@@ -8953,11 +8934,10 @@
       const currentUrl = new URL(iframe.src);
       const videoId = currentUrl.pathname.split('/').pop();
 
-      // Fallback simple: avanza cada 12s en modo maratón si no se puede captar evento "ended" del reproductor embebido.
-      // Esto mantiene la reproducción encadenada sin interacción adicional tras activar maratón.
-      clearTimeout(window.__marathonFallback);
-      if (state.marathon.isPlaying && videoId) {
-        window.__marathonFallback = setTimeout(nextInMarathon, 12000);
+      // Respaldo opcional: por defecto desactivado para no asumir duraciones fijas.
+      clearMarathonFallbackTimer();
+      if (MARATHON_FALLBACK_MS > 0 && state.marathon.isPlaying && videoId) {
+        window.__marathonFallback = setTimeout(nextInMarathon, MARATHON_FALLBACK_MS);
       }
     }
 
