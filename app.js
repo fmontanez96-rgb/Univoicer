@@ -75,6 +75,16 @@
         voces: [],
         fondos: []
       },
+      audioMixer: {
+        voiceId: '',
+        backgroundId: '',
+        voiceVolume: 1,
+        backgroundVolume: 0.6,
+        backgroundStartOffsetSec: 0,
+        backgroundPadMode: 'none',
+        isPlaying: false,
+        previewPositionSec: 0
+      },
       uploadStatusByCategory: {
         voces: { loading: false, error: '', success: '' },
         fondos: { loading: false, error: '', success: '' }
@@ -132,6 +142,7 @@
     const viewAudioGallery = document.getElementById('viewAudioGallery');
     const viewAudioVoces = document.getElementById('viewAudioVoces');
     const viewAudioFondos = document.getElementById('viewAudioFondos');
+    const viewAudioMixer = document.getElementById('viewAudioMixer');
 
     function rarityClass(rareza) {
       return `rare-${rareza.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')}`;
@@ -1568,6 +1579,71 @@
         target.set(source.subarray(endIndex), startIndex);
       }
       return nextBuffer;
+    }
+
+    function mixVoiceWithBackground(voiceBuffer, bgBuffer, options = {}) {
+      if (!voiceBuffer || !bgBuffer) {
+        throw new Error('Se necesitan voiceBuffer y bgBuffer para mezclar el audio.');
+      }
+
+      const {
+        backgroundStartOffsetSec = 0,
+        shortBackgroundBehavior = 'none',
+        voiceVolume = 1,
+        backgroundVolume = 1
+      } = options;
+
+      const context = getSharedAudioContext();
+      const outputSampleRate = voiceBuffer.sampleRate;
+      const voiceLength = Math.max(0, voiceBuffer.length);
+      const outputLength = voiceLength;
+      const outputChannels = Math.max(voiceBuffer.numberOfChannels, bgBuffer.numberOfChannels, 1);
+      const mixedBuffer = context.createBuffer(outputChannels, outputLength, outputSampleRate);
+
+      const bgSliceStart = Math.max(0, Number(backgroundStartOffsetSec) || 0);
+      const bgStartSample = Math.min(bgBuffer.length, Math.floor(bgSliceStart * bgBuffer.sampleRate));
+      const availableBgSamples = Math.max(0, bgBuffer.length - bgStartSample);
+      const bgResampleRatio = bgBuffer.sampleRate / outputSampleRate;
+      const bgAvailableOnOutput = Math.max(0, Math.floor(availableBgSamples / (bgResampleRatio || 1)));
+      const bgSamplesToMix = Math.min(outputLength, bgAvailableOnOutput);
+
+      const normalizedBehavior = String(shortBackgroundBehavior || 'none').toLowerCase();
+      let bgOutputStart = 0;
+      if (normalizedBehavior === 'padstart' && bgSamplesToMix < outputLength) {
+        bgOutputStart = outputLength - bgSamplesToMix;
+      }
+      const bgOutputEnd = Math.min(outputLength, bgOutputStart + bgSamplesToMix);
+
+      const safeVoiceVolume = Number.isFinite(voiceVolume) ? voiceVolume : 1;
+      const safeBackgroundVolume = Number.isFinite(backgroundVolume) ? backgroundVolume : 1;
+
+      for (let channel = 0; channel < outputChannels; channel += 1) {
+        const target = mixedBuffer.getChannelData(channel);
+
+        const voiceChannelIndex = voiceBuffer.numberOfChannels === 1
+          ? 0
+          : Math.min(channel, voiceBuffer.numberOfChannels - 1);
+        const voiceData = voiceBuffer.getChannelData(voiceChannelIndex);
+        for (let sample = 0; sample < outputLength; sample += 1) {
+          const voiceSample = sample < voiceData.length ? voiceData[sample] : 0;
+          target[sample] = voiceSample * safeVoiceVolume;
+        }
+
+        if (bgSamplesToMix <= 0) continue;
+        const bgChannelIndex = bgBuffer.numberOfChannels === 1
+          ? 0
+          : Math.min(channel, bgBuffer.numberOfChannels - 1);
+        const bgData = bgBuffer.getChannelData(bgChannelIndex);
+
+        for (let outputIndex = bgOutputStart; outputIndex < bgOutputEnd; outputIndex += 1) {
+          const relativeIndex = outputIndex - bgOutputStart;
+          const bgIndex = bgStartSample + Math.floor(relativeIndex * bgResampleRatio);
+          if (bgIndex < 0 || bgIndex >= bgBuffer.length) continue;
+          target[outputIndex] += bgData[bgIndex] * safeBackgroundVolume;
+        }
+      }
+
+      return mixedBuffer;
     }
 
     function audioBufferToWavBlob(buffer) {
@@ -6437,6 +6513,7 @@
           <div class="mock-row">
             <button class="neon-btn toon-btn" data-audio-folder="voces" style="min-height: 140px; min-width: 220px;">🎤 VOCES</button>
             <button class="neon-btn toon-btn" data-audio-folder="fondos" style="min-height: 140px; min-width: 220px;">🎵 FONDOS</button>
+            <button class="neon-btn toon-btn" data-audio-folder="mixer" style="min-height: 140px; min-width: 220px;">🎚️ MEZCLAR</button>
           </div>
           <div class="actions" style="margin-top: 1rem;">
             <button class="neon-btn toon-btn" data-open-audio-mixer>🎛️ Preview mezcla (voz + fondo)</button>
@@ -6446,321 +6523,7 @@
 
       viewAudioGallery.querySelector('[data-audio-folder="voces"]')?.addEventListener('click', () => changeView('audioVoces'));
       viewAudioGallery.querySelector('[data-audio-folder="fondos"]')?.addEventListener('click', () => changeView('audioFondos'));
-      viewAudioGallery.querySelector('[data-open-audio-mixer]')?.addEventListener('click', openAudioMixerModal);
-    }
-
-    function openAudioMixerModal() {
-      const voces = Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [];
-      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
-
-      const modal = document.createElement('section');
-      modal.className = 'detail-modal';
-      modal.innerHTML = `
-        <article class="detail-content audio-trim-modal">
-          <h3 class="section-title">Preview de mezcla (Web Audio)</h3>
-          <p class="muted">Selecciona una voz y un fondo para escuchar una mezcla sincronizada. La reproducción termina con la duración de la voz.</p>
-          <div class="audio-trim-modal__header">
-            <label class="audio-trim-modal__name-field">Voz
-              <select class="control-input" data-mixer-voice>
-                <option value="">Selecciona voz...</option>
-                ${voces.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || 'Voz sin nombre')}</option>`).join('')}
-              </select>
-            </label>
-            <label class="audio-trim-modal__name-field">Fondo
-              <select class="control-input" data-mixer-bg>
-                <option value="">Sin fondo</option>
-                ${fondos.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || 'Fondo sin nombre')}</option>`).join('')}
-              </select>
-            </label>
-          </div>
-          <canvas class="audio-trim-modal__waveform" width="860" height="170" data-mixer-waveform></canvas>
-          <div class="audio-trim-modal__ranges">
-            <label>Volumen voz <span data-mixer-voice-label>100%</span>
-              <input type="range" min="0" max="1.6" step="0.01" value="1" data-mixer-voice-volume>
-            </label>
-            <label>Volumen fondo <span data-mixer-bg-label>45%</span>
-              <input type="range" min="0" max="1.6" step="0.01" value="0.45" data-mixer-bg-volume>
-            </label>
-            <label>Inicio del fondo <span data-mixer-bg-offset-label>00:00.000</span>
-              <input type="range" min="0" max="0" step="0.01" value="0" data-mixer-bg-offset>
-            </label>
-          </div>
-          <p class="audio-library-feedback" aria-live="polite" data-mixer-feedback>${!voces.length ? 'No hay voces cargadas todavía.' : 'Selecciona una voz para comenzar.'}</p>
-          <div class="actions">
-            <button type="button" class="neon-btn" data-mixer-close>Cerrar</button>
-            <button type="button" class="neon-btn" data-mixer-play-pause ${!voces.length ? 'disabled' : ''}>▶ Play preview</button>
-            <button type="button" class="neon-btn neon-btn--primary" data-mixer-export ${!voces.length ? 'disabled' : ''}>⬇️ Exportar WAV</button>
-          </div>
-        </article>
-      `;
-      document.body.appendChild(modal);
-
-      const voiceSelect = modal.querySelector('[data-mixer-voice]');
-      const bgSelect = modal.querySelector('[data-mixer-bg]');
-      const voiceVolumeInput = modal.querySelector('[data-mixer-voice-volume]');
-      const bgVolumeInput = modal.querySelector('[data-mixer-bg-volume]');
-      const bgOffsetInput = modal.querySelector('[data-mixer-bg-offset]');
-      const voiceVolumeLabel = modal.querySelector('[data-mixer-voice-label]');
-      const bgVolumeLabel = modal.querySelector('[data-mixer-bg-label]');
-      const bgOffsetLabel = modal.querySelector('[data-mixer-bg-offset-label]');
-      const playPauseBtn = modal.querySelector('[data-mixer-play-pause]');
-      const exportBtn = modal.querySelector('[data-mixer-export]');
-      const closeBtn = modal.querySelector('[data-mixer-close]');
-      const feedbackEl = modal.querySelector('[data-mixer-feedback]');
-      const waveformCanvas = modal.querySelector('[data-mixer-waveform]');
-
-      const decodedCache = new Map();
-      let playbackTimeout = null;
-      let isPlaying = false;
-      let voiceSourceNode = null;
-      let bgSourceNode = null;
-      let voiceGain = null;
-      let bgGain = null;
-      let stopAtTime = 0;
-
-      const updateVolumeLabels = () => {
-        const voiceVolume = Math.max(0, Number(voiceVolumeInput?.value) || 0);
-        const bgVolume = Math.max(0, Number(bgVolumeInput?.value) || 0);
-        voiceVolumeLabel.textContent = `${Math.round(voiceVolume * 100)}%`;
-        bgVolumeLabel.textContent = `${Math.round(bgVolume * 100)}%`;
-      };
-
-      const stopPlayback = ({ updateButton = true } = {}) => {
-        if (playbackTimeout) {
-          clearTimeout(playbackTimeout);
-          playbackTimeout = null;
-        }
-        [voiceSourceNode, bgSourceNode].forEach((node) => {
-          if (!node) return;
-          try {
-            node.stop();
-          } catch (_) {}
-          try {
-            node.disconnect();
-          } catch (_) {}
-        });
-        [voiceGain, bgGain].forEach((node) => {
-          if (!node) return;
-          try {
-            node.disconnect();
-          } catch (_) {}
-        });
-        voiceSourceNode = null;
-        bgSourceNode = null;
-        voiceGain = null;
-        bgGain = null;
-        stopAtTime = 0;
-        isPlaying = false;
-        if (updateButton && playPauseBtn) playPauseBtn.textContent = '▶ Play preview';
-      };
-
-      const closeModal = () => {
-        stopPlayback();
-        modal.remove();
-      };
-
-      const findAudioById = (category, audioId) => {
-        const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
-        return items.find((item) => item.id === audioId) || null;
-      };
-
-      const decodeWithCache = async (cacheKey, url) => {
-        if (!url) return null;
-        if (decodedCache.has(cacheKey)) return decodedCache.get(cacheKey);
-        const decoded = await decodeAudioBufferFromUrl(url);
-        decodedCache.set(cacheKey, decoded);
-        return decoded;
-      };
-
-      const refreshWaveform = async () => {
-        const voiceId = String(voiceSelect?.value || '');
-        if (!voiceId) return;
-        const voiceItem = findAudioById('voces', voiceId);
-        if (!voiceItem?.url) return;
-        const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
-        renderAudioWaveform(waveformCanvas, voiceBuffer, {
-          trimStart: 0,
-          trimEnd: voiceBuffer.duration,
-          zoom: 1
-        });
-        const bgOffset = Math.max(0, Number(bgOffsetInput?.value) || 0);
-        drawAudioMixerBackgroundMarker(waveformCanvas, bgOffset, voiceBuffer.duration);
-      };
-
-      const updateBgOffsetLimits = async () => {
-        const bgId = String(bgSelect?.value || '');
-        if (!bgId) {
-          bgOffsetInput.max = '0';
-          bgOffsetInput.value = '0';
-          bgOffsetLabel.textContent = formatAudioEditTime(0);
-          await refreshWaveform();
-          return;
-        }
-        const bgItem = findAudioById('fondos', bgId);
-        if (!bgItem?.url) return;
-        const bgBuffer = await decodeWithCache(`b:${bgItem.id}`, bgItem.url);
-        const maxOffset = Math.max(0, Number(bgBuffer.duration.toFixed(3)));
-        bgOffsetInput.max = String(maxOffset);
-        if (Number(bgOffsetInput.value) > maxOffset) bgOffsetInput.value = String(maxOffset);
-        bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput.value) || 0);
-        await refreshWaveform();
-      };
-
-      const playPreview = async () => {
-        const voiceId = String(voiceSelect?.value || '');
-        if (!voiceId) throw new Error('Selecciona una voz antes de reproducir.');
-        const voiceItem = findAudioById('voces', voiceId);
-        if (!voiceItem?.url) throw new Error('La voz seleccionada no tiene URL válida.');
-        const bgId = String(bgSelect?.value || '');
-        const bgItem = bgId ? findAudioById('fondos', bgId) : null;
-
-        stopPlayback({ updateButton: false });
-        const context = getSharedAudioContext();
-        if (context.state === 'suspended') await context.resume();
-
-        const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
-        const bgBuffer = bgItem?.url ? await decodeWithCache(`b:${bgItem.id}`, bgItem.url) : null;
-        const startAt = context.currentTime + 0.05;
-        const voiceDuration = Math.max(0.01, voiceBuffer.duration || 0.01);
-        const stopAt = startAt + voiceDuration;
-        stopAtTime = stopAt;
-
-        voiceSourceNode = context.createBufferSource();
-        voiceSourceNode.buffer = voiceBuffer;
-        voiceGain = context.createGain();
-        voiceGain.gain.value = Math.max(0, Number(voiceVolumeInput.value) || 0);
-        voiceSourceNode.connect(voiceGain);
-        voiceGain.connect(context.destination);
-        voiceSourceNode.start(startAt, 0, voiceDuration);
-        voiceSourceNode.stop(stopAt);
-
-        if (bgBuffer) {
-          const bgOffset = Math.max(0, Number(bgOffsetInput.value) || 0);
-          const bgDuration = Math.min(voiceDuration, Math.max(0, bgBuffer.duration - bgOffset));
-          if (bgDuration > 0) {
-            bgSourceNode = context.createBufferSource();
-            bgSourceNode.buffer = bgBuffer;
-            bgGain = context.createGain();
-            bgGain.gain.value = Math.max(0, Number(bgVolumeInput.value) || 0);
-            bgSourceNode.connect(bgGain);
-            bgGain.connect(context.destination);
-            bgSourceNode.start(startAt, bgOffset, bgDuration);
-            bgSourceNode.stop(stopAt);
-          }
-        }
-
-        const remainingMs = Math.max(0, Math.round((stopAt - context.currentTime) * 1000));
-        playbackTimeout = setTimeout(() => {
-          stopPlayback();
-          feedbackEl.classList.remove('is-error');
-          feedbackEl.textContent = 'Preview finalizado.';
-        }, remainingMs + 60);
-
-        isPlaying = true;
-        playPauseBtn.textContent = '⏸ Pause preview';
-      };
-
-      const onVolumeInput = () => {
-        updateVolumeLabels();
-        if (voiceGain) voiceGain.gain.value = Math.max(0, Number(voiceVolumeInput.value) || 0);
-        if (bgGain) bgGain.gain.value = Math.max(0, Number(bgVolumeInput.value) || 0);
-      };
-
-      updateVolumeLabels();
-      bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput?.value) || 0);
-
-      modal.addEventListener('click', (event) => {
-        if (event.target === modal) closeModal();
-      });
-      closeBtn?.addEventListener('click', closeModal);
-
-      voiceSelect?.addEventListener('change', async () => {
-        stopPlayback();
-        try {
-          feedbackEl.classList.remove('is-error');
-          feedbackEl.textContent = 'Cargando vista previa de voz...';
-          await refreshWaveform();
-          feedbackEl.textContent = 'Voz lista. Puedes reproducir el preview.';
-        } catch (err) {
-          feedbackEl.classList.add('is-error');
-          feedbackEl.textContent = err?.message || 'No se pudo cargar la voz seleccionada.';
-        }
-      });
-
-      bgSelect?.addEventListener('change', async () => {
-        stopPlayback();
-        try {
-          feedbackEl.classList.remove('is-error');
-          await updateBgOffsetLimits();
-          feedbackEl.textContent = 'Fondo actualizado en el preview.';
-        } catch (err) {
-          feedbackEl.classList.add('is-error');
-          feedbackEl.textContent = err?.message || 'No se pudo cargar el fondo seleccionado.';
-        }
-      });
-
-      bgOffsetInput?.addEventListener('input', async () => {
-        bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput.value) || 0);
-        await refreshWaveform();
-      });
-      voiceVolumeInput?.addEventListener('input', onVolumeInput);
-      bgVolumeInput?.addEventListener('input', onVolumeInput);
-
-      playPauseBtn?.addEventListener('click', async () => {
-        if (isPlaying) {
-          stopPlayback();
-          return;
-        }
-        playPauseBtn.disabled = true;
-        feedbackEl.classList.remove('is-error');
-        feedbackEl.textContent = 'Preparando preview...';
-        try {
-          await playPreview();
-          feedbackEl.textContent = 'Reproduciendo mezcla sincronizada.';
-        } catch (err) {
-          stopPlayback();
-          feedbackEl.classList.add('is-error');
-          feedbackEl.textContent = err?.message || 'No se pudo reproducir la mezcla.';
-        } finally {
-          playPauseBtn.disabled = false;
-        }
-      });
-
-      exportBtn?.addEventListener('click', async () => {
-        exportBtn.disabled = true;
-        feedbackEl.classList.remove('is-error');
-        feedbackEl.textContent = 'Renderizando mezcla WAV...';
-        try {
-          const voiceId = String(voiceSelect?.value || '');
-          if (!voiceId) throw new Error('Selecciona una voz para exportar.');
-          const voiceItem = findAudioById('voces', voiceId);
-          if (!voiceItem?.url) throw new Error('La voz seleccionada no tiene URL válida.');
-          const bgId = String(bgSelect?.value || '');
-          const bgItem = bgId ? findAudioById('fondos', bgId) : null;
-          const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
-          const bgBuffer = bgItem?.url ? await decodeWithCache(`b:${bgItem.id}`, bgItem.url) : null;
-          const mixedBuffer = await createMixedAudioBuffer({
-            voiceBuffer,
-            backgroundBuffer: bgBuffer,
-            voiceVolume: Number(voiceVolumeInput.value) || 1,
-            backgroundVolume: Number(bgVolumeInput.value) || 0.45,
-            backgroundOffset: Number(bgOffsetInput.value) || 0
-          });
-          const wavBlob = audioBufferToWavBlob(mixedBuffer);
-          const objectUrl = URL.createObjectURL(wavBlob);
-          const a = document.createElement('a');
-          a.href = objectUrl;
-          a.download = `mezcla-${cssSafe(voiceItem.name || 'voz')}.wav`;
-          a.click();
-          URL.revokeObjectURL(objectUrl);
-          feedbackEl.textContent = 'Exportación WAV completada.';
-        } catch (err) {
-          feedbackEl.classList.add('is-error');
-          feedbackEl.textContent = err?.message || 'No se pudo exportar el WAV.';
-        } finally {
-          exportBtn.disabled = false;
-        }
-      });
+      viewAudioGallery.querySelector('[data-audio-folder="mixer"]')?.addEventListener('click', () => changeView('audioMixer'));
     }
 
     function renderAudioCategoryView(category) {
@@ -6827,6 +6590,115 @@
           if (!audioId) return;
           openMarkAudioLibraryAsUsedModal(category, audioId);
         });
+      });
+    }
+
+    function renderAudioMixerView() {
+      const voces = Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      const selectedVoiceId = voces.some((item) => item.id === state.audioMixer.voiceId) ? state.audioMixer.voiceId : '';
+      const selectedBackgroundId = fondos.some((item) => item.id === state.audioMixer.backgroundId) ? state.audioMixer.backgroundId : '';
+
+      state.audioMixer.voiceId = selectedVoiceId;
+      state.audioMixer.backgroundId = selectedBackgroundId;
+
+      viewAudioMixer.innerHTML = `
+        <section class="mock-shell">
+          <h2>🎚️ Mezclador de audios</h2>
+          <p class="muted">Combina una voz con un fondo y configura volúmenes, offset y estirado.</p>
+          <div class="audio-upload-inline">
+            <button class="neon-btn toon-btn" data-audio-mixer-preview>Previsualizar</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-pause>Pausar</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-generate>Generar mezcla</button>
+            <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
+          </div>
+        </section>
+        <section class="panel">
+          <h3>Parámetros de mezcla</h3>
+          <div class="audio-upload-inline" style="flex-direction: column; align-items: stretch;">
+            <label>Voz
+              <select class="control-input" data-audio-mixer-voice>
+                <option value="">Selecciona una voz</option>
+                ${voces.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === state.audioMixer.voiceId ? 'selected' : ''}>${escapeHtml(item.name || 'Voz sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <label>Fondo
+              <select class="control-input" data-audio-mixer-background>
+                <option value="">Selecciona un fondo</option>
+                ${fondos.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === state.audioMixer.backgroundId ? 'selected' : ''}>${escapeHtml(item.name || 'Fondo sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <label>Volumen voz: <span data-audio-mixer-voice-volume-value>${Number(state.audioMixer.voiceVolume || 0).toFixed(2)}</span>
+              <input type="range" min="0" max="1.5" step="0.01" class="control-input" data-audio-mixer-voice-volume value="${Number(state.audioMixer.voiceVolume || 0)}">
+            </label>
+            <label>Volumen fondo: <span data-audio-mixer-background-volume-value>${Number(state.audioMixer.backgroundVolume || 0).toFixed(2)}</span>
+              <input type="range" min="0" max="1.5" step="0.01" class="control-input" data-audio-mixer-background-volume value="${Number(state.audioMixer.backgroundVolume || 0)}">
+            </label>
+            <label>Offset inicio fondo (segundos)
+              <input type="number" min="0" step="0.1" class="control-input" data-audio-mixer-background-offset value="${Number(state.audioMixer.backgroundStartOffsetSec || 0)}">
+            </label>
+            <label>Estirado del fondo
+              <select class="control-input" data-audio-mixer-pad-mode>
+                <option value="none" ${state.audioMixer.backgroundPadMode === 'none' ? 'selected' : ''}>Sin estirar</option>
+                <option value="padStart" ${state.audioMixer.backgroundPadMode === 'padStart' ? 'selected' : ''}>Pad al inicio</option>
+                <option value="padEnd" ${state.audioMixer.backgroundPadMode === 'padEnd' ? 'selected' : ''}>Pad al final</option>
+              </select>
+            </label>
+            <p class="audio-library-feedback" aria-live="polite" data-audio-mixer-feedback>
+              Estado: ${state.audioMixer.isPlaying ? 'Reproduciendo previsualización' : 'En pausa'} · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s
+            </p>
+          </div>
+        </section>
+      `;
+
+      const syncVoiceVolumeLabel = () => {
+        const label = viewAudioMixer.querySelector('[data-audio-mixer-voice-volume-value]');
+        if (label) label.textContent = Number(state.audioMixer.voiceVolume || 0).toFixed(2);
+      };
+      const syncBackgroundVolumeLabel = () => {
+        const label = viewAudioMixer.querySelector('[data-audio-mixer-background-volume-value]');
+        if (label) label.textContent = Number(state.audioMixer.backgroundVolume || 0).toFixed(2);
+      };
+
+      viewAudioMixer.querySelector('[data-back-audio-gallery]')?.addEventListener('click', () => changeView('audioGallery'));
+      viewAudioMixer.querySelector('[data-audio-mixer-voice]')?.addEventListener('change', (event) => {
+        state.audioMixer.voiceId = String(event.target?.value || '');
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background]')?.addEventListener('change', (event) => {
+        state.audioMixer.backgroundId = String(event.target?.value || '');
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-voice-volume]')?.addEventListener('input', (event) => {
+        state.audioMixer.voiceVolume = Math.max(0, Number(event.target?.value) || 0);
+        syncVoiceVolumeLabel();
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background-volume]')?.addEventListener('input', (event) => {
+        state.audioMixer.backgroundVolume = Math.max(0, Number(event.target?.value) || 0);
+        syncBackgroundVolumeLabel();
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background-offset]')?.addEventListener('input', (event) => {
+        state.audioMixer.backgroundStartOffsetSec = Math.max(0, Number(event.target?.value) || 0);
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-pad-mode]')?.addEventListener('change', (event) => {
+        const validModes = ['none', 'padStart', 'padEnd'];
+        const nextMode = String(event.target?.value || 'none');
+        state.audioMixer.backgroundPadMode = validModes.includes(nextMode) ? nextMode : 'none';
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-preview]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = true;
+        state.audioMixer.previewPositionSec = 0;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = 'Estado: Reproduciendo previsualización · Posición: 0.0s';
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-pause]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = false;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = `Estado: En pausa · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s`;
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-generate]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = false;
+        state.audioMixer.previewPositionSec = 0;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = 'Mezcla generada (stub). Próximo paso: exportar archivo resultante.';
       });
     }
 
@@ -6960,6 +6832,7 @@
       viewAudioGallery.classList.toggle('active', next === 'audioGallery');
       viewAudioVoces.classList.toggle('active', next === 'audioVoces');
       viewAudioFondos.classList.toggle('active', next === 'audioFondos');
+      viewAudioMixer.classList.toggle('active', next === 'audioMixer');
       document.querySelectorAll('.sidebar-nav .sidebar-item').forEach(btn => btn.classList.remove('active'));
       const activeNavByView = {
         map: navUniverses,
@@ -6970,7 +6843,8 @@
         maraton: navMaraton,
         audioGallery: navGaleriaAudios,
         audioVoces: navGaleriaAudios,
-        audioFondos: navGaleriaAudios
+        audioFondos: navGaleriaAudios,
+        audioMixer: navGaleriaAudios
       };
       activeNavByView[next]?.classList.add('active');
 
@@ -6992,6 +6866,7 @@
       if (next === 'audioGallery') renderAudioGalleryView();
       if (next === 'audioVoces') renderAudioCategoryView('voces');
       if (next === 'audioFondos') renderAudioCategoryView('fondos');
+      if (next === 'audioMixer') renderAudioMixerView();
     }
 
     toggleSidebar.onclick = () => {
