@@ -75,6 +75,16 @@
         voces: [],
         fondos: []
       },
+      audioMixer: {
+        voiceId: '',
+        backgroundId: '',
+        voiceVolume: 1,
+        backgroundVolume: 0.6,
+        backgroundStartOffsetSec: 0,
+        backgroundPadMode: 'none',
+        isPlaying: false,
+        previewPositionSec: 0
+      },
       uploadStatusByCategory: {
         voces: { loading: false, error: '', success: '' },
         fondos: { loading: false, error: '', success: '' }
@@ -132,6 +142,7 @@
     const viewAudioGallery = document.getElementById('viewAudioGallery');
     const viewAudioVoces = document.getElementById('viewAudioVoces');
     const viewAudioFondos = document.getElementById('viewAudioFondos');
+    const viewAudioMixer = document.getElementById('viewAudioMixer');
 
     function rarityClass(rareza) {
       return `rare-${rareza.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')}`;
@@ -6368,12 +6379,14 @@
           <div class="mock-row">
             <button class="neon-btn toon-btn" data-audio-folder="voces" style="min-height: 140px; min-width: 220px;">🎤 VOCES</button>
             <button class="neon-btn toon-btn" data-audio-folder="fondos" style="min-height: 140px; min-width: 220px;">🎵 FONDOS</button>
+            <button class="neon-btn toon-btn" data-audio-folder="mixer" style="min-height: 140px; min-width: 220px;">🎚️ MEZCLAR</button>
           </div>
         </section>
       `;
 
       viewAudioGallery.querySelector('[data-audio-folder="voces"]')?.addEventListener('click', () => changeView('audioVoces'));
       viewAudioGallery.querySelector('[data-audio-folder="fondos"]')?.addEventListener('click', () => changeView('audioFondos'));
+      viewAudioGallery.querySelector('[data-audio-folder="mixer"]')?.addEventListener('click', () => changeView('audioMixer'));
     }
 
     function renderAudioCategoryView(category) {
@@ -6440,6 +6453,115 @@
           if (!audioId) return;
           openMarkAudioLibraryAsUsedModal(category, audioId);
         });
+      });
+    }
+
+    function renderAudioMixerView() {
+      const voces = Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      const selectedVoiceId = voces.some((item) => item.id === state.audioMixer.voiceId) ? state.audioMixer.voiceId : '';
+      const selectedBackgroundId = fondos.some((item) => item.id === state.audioMixer.backgroundId) ? state.audioMixer.backgroundId : '';
+
+      state.audioMixer.voiceId = selectedVoiceId;
+      state.audioMixer.backgroundId = selectedBackgroundId;
+
+      viewAudioMixer.innerHTML = `
+        <section class="mock-shell">
+          <h2>🎚️ Mezclador de audios</h2>
+          <p class="muted">Combina una voz con un fondo y configura volúmenes, offset y estirado.</p>
+          <div class="audio-upload-inline">
+            <button class="neon-btn toon-btn" data-audio-mixer-preview>Previsualizar</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-pause>Pausar</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-generate>Generar mezcla</button>
+            <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
+          </div>
+        </section>
+        <section class="panel">
+          <h3>Parámetros de mezcla</h3>
+          <div class="audio-upload-inline" style="flex-direction: column; align-items: stretch;">
+            <label>Voz
+              <select class="control-input" data-audio-mixer-voice>
+                <option value="">Selecciona una voz</option>
+                ${voces.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === state.audioMixer.voiceId ? 'selected' : ''}>${escapeHtml(item.name || 'Voz sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <label>Fondo
+              <select class="control-input" data-audio-mixer-background>
+                <option value="">Selecciona un fondo</option>
+                ${fondos.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === state.audioMixer.backgroundId ? 'selected' : ''}>${escapeHtml(item.name || 'Fondo sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <label>Volumen voz: <span data-audio-mixer-voice-volume-value>${Number(state.audioMixer.voiceVolume || 0).toFixed(2)}</span>
+              <input type="range" min="0" max="1.5" step="0.01" class="control-input" data-audio-mixer-voice-volume value="${Number(state.audioMixer.voiceVolume || 0)}">
+            </label>
+            <label>Volumen fondo: <span data-audio-mixer-background-volume-value>${Number(state.audioMixer.backgroundVolume || 0).toFixed(2)}</span>
+              <input type="range" min="0" max="1.5" step="0.01" class="control-input" data-audio-mixer-background-volume value="${Number(state.audioMixer.backgroundVolume || 0)}">
+            </label>
+            <label>Offset inicio fondo (segundos)
+              <input type="number" min="0" step="0.1" class="control-input" data-audio-mixer-background-offset value="${Number(state.audioMixer.backgroundStartOffsetSec || 0)}">
+            </label>
+            <label>Estirado del fondo
+              <select class="control-input" data-audio-mixer-pad-mode>
+                <option value="none" ${state.audioMixer.backgroundPadMode === 'none' ? 'selected' : ''}>Sin estirar</option>
+                <option value="padStart" ${state.audioMixer.backgroundPadMode === 'padStart' ? 'selected' : ''}>Pad al inicio</option>
+                <option value="padEnd" ${state.audioMixer.backgroundPadMode === 'padEnd' ? 'selected' : ''}>Pad al final</option>
+              </select>
+            </label>
+            <p class="audio-library-feedback" aria-live="polite" data-audio-mixer-feedback>
+              Estado: ${state.audioMixer.isPlaying ? 'Reproduciendo previsualización' : 'En pausa'} · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s
+            </p>
+          </div>
+        </section>
+      `;
+
+      const syncVoiceVolumeLabel = () => {
+        const label = viewAudioMixer.querySelector('[data-audio-mixer-voice-volume-value]');
+        if (label) label.textContent = Number(state.audioMixer.voiceVolume || 0).toFixed(2);
+      };
+      const syncBackgroundVolumeLabel = () => {
+        const label = viewAudioMixer.querySelector('[data-audio-mixer-background-volume-value]');
+        if (label) label.textContent = Number(state.audioMixer.backgroundVolume || 0).toFixed(2);
+      };
+
+      viewAudioMixer.querySelector('[data-back-audio-gallery]')?.addEventListener('click', () => changeView('audioGallery'));
+      viewAudioMixer.querySelector('[data-audio-mixer-voice]')?.addEventListener('change', (event) => {
+        state.audioMixer.voiceId = String(event.target?.value || '');
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background]')?.addEventListener('change', (event) => {
+        state.audioMixer.backgroundId = String(event.target?.value || '');
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-voice-volume]')?.addEventListener('input', (event) => {
+        state.audioMixer.voiceVolume = Math.max(0, Number(event.target?.value) || 0);
+        syncVoiceVolumeLabel();
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background-volume]')?.addEventListener('input', (event) => {
+        state.audioMixer.backgroundVolume = Math.max(0, Number(event.target?.value) || 0);
+        syncBackgroundVolumeLabel();
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-background-offset]')?.addEventListener('input', (event) => {
+        state.audioMixer.backgroundStartOffsetSec = Math.max(0, Number(event.target?.value) || 0);
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-pad-mode]')?.addEventListener('change', (event) => {
+        const validModes = ['none', 'padStart', 'padEnd'];
+        const nextMode = String(event.target?.value || 'none');
+        state.audioMixer.backgroundPadMode = validModes.includes(nextMode) ? nextMode : 'none';
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-preview]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = true;
+        state.audioMixer.previewPositionSec = 0;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = 'Estado: Reproduciendo previsualización · Posición: 0.0s';
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-pause]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = false;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = `Estado: En pausa · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s`;
+      });
+      viewAudioMixer.querySelector('[data-audio-mixer-generate]')?.addEventListener('click', () => {
+        state.audioMixer.isPlaying = false;
+        state.audioMixer.previewPositionSec = 0;
+        const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
+        if (feedback) feedback.textContent = 'Mezcla generada (stub). Próximo paso: exportar archivo resultante.';
       });
     }
 
@@ -6573,6 +6695,7 @@
       viewAudioGallery.classList.toggle('active', next === 'audioGallery');
       viewAudioVoces.classList.toggle('active', next === 'audioVoces');
       viewAudioFondos.classList.toggle('active', next === 'audioFondos');
+      viewAudioMixer.classList.toggle('active', next === 'audioMixer');
       document.querySelectorAll('.sidebar-nav .sidebar-item').forEach(btn => btn.classList.remove('active'));
       const activeNavByView = {
         map: navUniverses,
@@ -6583,7 +6706,8 @@
         maraton: navMaraton,
         audioGallery: navGaleriaAudios,
         audioVoces: navGaleriaAudios,
-        audioFondos: navGaleriaAudios
+        audioFondos: navGaleriaAudios,
+        audioMixer: navGaleriaAudios
       };
       activeNavByView[next]?.classList.add('active');
 
@@ -6605,6 +6729,7 @@
       if (next === 'audioGallery') renderAudioGalleryView();
       if (next === 'audioVoces') renderAudioCategoryView('voces');
       if (next === 'audioFondos') renderAudioCategoryView('fondos');
+      if (next === 'audioMixer') renderAudioMixerView();
     }
 
     toggleSidebar.onclick = () => {
