@@ -1690,6 +1690,75 @@
       return new Blob([arrayBuffer], { type: 'audio/wav' });
     }
 
+    async function decodeAudioBufferFromUrl(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('No se pudo descargar el audio seleccionado.');
+      const fileBytes = await response.arrayBuffer();
+      const audioContext = getSharedAudioContext();
+      return audioContext.decodeAudioData(fileBytes.slice(0));
+    }
+
+    function drawAudioMixerBackgroundMarker(canvas, markerSeconds, maxDuration) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const safeMaxDuration = Math.max(0.01, Number(maxDuration) || 0.01);
+      const safeMarker = Math.max(0, Math.min(safeMaxDuration, Number(markerSeconds) || 0));
+      const x = Math.round((safeMarker / safeMaxDuration) * canvas.width);
+      ctx.strokeStyle = 'rgba(255, 168, 110, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 168, 110, 0.95)';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.fillText('Inicio fondo', Math.min(canvas.width - 92, x + 6), 16);
+    }
+
+    async function createMixedAudioBuffer({
+      voiceBuffer,
+      backgroundBuffer,
+      voiceVolume = 1,
+      backgroundVolume = 0.6,
+      backgroundOffset = 0
+    }) {
+      const safeVoiceDuration = Math.max(0.01, Number(voiceBuffer?.duration) || 0.01);
+      const sampleRate = voiceBuffer?.sampleRate || backgroundBuffer?.sampleRate || 44100;
+      const length = Math.max(1, Math.ceil(safeVoiceDuration * sampleRate));
+      const channels = Math.max(voiceBuffer?.numberOfChannels || 1, backgroundBuffer?.numberOfChannels || 1);
+      const offlineContext = new OfflineAudioContext(channels, length, sampleRate);
+      const output = offlineContext.createGain();
+      output.gain.value = 1;
+      output.connect(offlineContext.destination);
+
+      const voiceSource = offlineContext.createBufferSource();
+      voiceSource.buffer = voiceBuffer;
+      const voiceGain = offlineContext.createGain();
+      voiceGain.gain.value = Math.max(0, Number(voiceVolume) || 0);
+      voiceSource.connect(voiceGain);
+      voiceGain.connect(output);
+      voiceSource.start(0, 0, safeVoiceDuration);
+
+      if (backgroundBuffer) {
+        const bgSource = offlineContext.createBufferSource();
+        bgSource.buffer = backgroundBuffer;
+        const bgGain = offlineContext.createGain();
+        bgGain.gain.value = Math.max(0, Number(backgroundVolume) || 0);
+        bgSource.connect(bgGain);
+        bgGain.connect(output);
+
+        const safeOffset = Math.max(0, Number(backgroundOffset) || 0);
+        const availableDuration = Math.max(0, backgroundBuffer.duration - safeOffset);
+        const bgDuration = Math.min(safeVoiceDuration, availableDuration);
+        if (bgDuration > 0) {
+          bgSource.start(0, safeOffset, bgDuration);
+        }
+      }
+
+      return offlineContext.startRendering();
+    }
+
     function renderAudioWaveform(canvas, buffer, { trimStart = 0, trimEnd = null, zoom = 1, playbackTime = null } = {}) {
       if (!canvas || !buffer) return;
       const ctx = canvas.getContext('2d');
@@ -6445,6 +6514,9 @@
             <button class="neon-btn toon-btn" data-audio-folder="voces" style="min-height: 140px; min-width: 220px;">🎤 VOCES</button>
             <button class="neon-btn toon-btn" data-audio-folder="fondos" style="min-height: 140px; min-width: 220px;">🎵 FONDOS</button>
             <button class="neon-btn toon-btn" data-audio-folder="mixer" style="min-height: 140px; min-width: 220px;">🎚️ MEZCLAR</button>
+          </div>
+          <div class="actions" style="margin-top: 1rem;">
+            <button class="neon-btn toon-btn" data-open-audio-mixer>🎛️ Preview mezcla (voz + fondo)</button>
           </div>
         </section>
       `;
