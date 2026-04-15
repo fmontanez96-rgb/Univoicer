@@ -1614,6 +1614,75 @@
       return new Blob([arrayBuffer], { type: 'audio/wav' });
     }
 
+    async function decodeAudioBufferFromUrl(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('No se pudo descargar el audio seleccionado.');
+      const fileBytes = await response.arrayBuffer();
+      const audioContext = getSharedAudioContext();
+      return audioContext.decodeAudioData(fileBytes.slice(0));
+    }
+
+    function drawAudioMixerBackgroundMarker(canvas, markerSeconds, maxDuration) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const safeMaxDuration = Math.max(0.01, Number(maxDuration) || 0.01);
+      const safeMarker = Math.max(0, Math.min(safeMaxDuration, Number(markerSeconds) || 0));
+      const x = Math.round((safeMarker / safeMaxDuration) * canvas.width);
+      ctx.strokeStyle = 'rgba(255, 168, 110, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 168, 110, 0.95)';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.fillText('Inicio fondo', Math.min(canvas.width - 92, x + 6), 16);
+    }
+
+    async function createMixedAudioBuffer({
+      voiceBuffer,
+      backgroundBuffer,
+      voiceVolume = 1,
+      backgroundVolume = 0.6,
+      backgroundOffset = 0
+    }) {
+      const safeVoiceDuration = Math.max(0.01, Number(voiceBuffer?.duration) || 0.01);
+      const sampleRate = voiceBuffer?.sampleRate || backgroundBuffer?.sampleRate || 44100;
+      const length = Math.max(1, Math.ceil(safeVoiceDuration * sampleRate));
+      const channels = Math.max(voiceBuffer?.numberOfChannels || 1, backgroundBuffer?.numberOfChannels || 1);
+      const offlineContext = new OfflineAudioContext(channels, length, sampleRate);
+      const output = offlineContext.createGain();
+      output.gain.value = 1;
+      output.connect(offlineContext.destination);
+
+      const voiceSource = offlineContext.createBufferSource();
+      voiceSource.buffer = voiceBuffer;
+      const voiceGain = offlineContext.createGain();
+      voiceGain.gain.value = Math.max(0, Number(voiceVolume) || 0);
+      voiceSource.connect(voiceGain);
+      voiceGain.connect(output);
+      voiceSource.start(0, 0, safeVoiceDuration);
+
+      if (backgroundBuffer) {
+        const bgSource = offlineContext.createBufferSource();
+        bgSource.buffer = backgroundBuffer;
+        const bgGain = offlineContext.createGain();
+        bgGain.gain.value = Math.max(0, Number(backgroundVolume) || 0);
+        bgSource.connect(bgGain);
+        bgGain.connect(output);
+
+        const safeOffset = Math.max(0, Number(backgroundOffset) || 0);
+        const availableDuration = Math.max(0, backgroundBuffer.duration - safeOffset);
+        const bgDuration = Math.min(safeVoiceDuration, availableDuration);
+        if (bgDuration > 0) {
+          bgSource.start(0, safeOffset, bgDuration);
+        }
+      }
+
+      return offlineContext.startRendering();
+    }
+
     function renderAudioWaveform(canvas, buffer, { trimStart = 0, trimEnd = null, zoom = 1, playbackTime = null } = {}) {
       if (!canvas || !buffer) return;
       const ctx = canvas.getContext('2d');
@@ -6369,11 +6438,329 @@
             <button class="neon-btn toon-btn" data-audio-folder="voces" style="min-height: 140px; min-width: 220px;">🎤 VOCES</button>
             <button class="neon-btn toon-btn" data-audio-folder="fondos" style="min-height: 140px; min-width: 220px;">🎵 FONDOS</button>
           </div>
+          <div class="actions" style="margin-top: 1rem;">
+            <button class="neon-btn toon-btn" data-open-audio-mixer>🎛️ Preview mezcla (voz + fondo)</button>
+          </div>
         </section>
       `;
 
       viewAudioGallery.querySelector('[data-audio-folder="voces"]')?.addEventListener('click', () => changeView('audioVoces'));
       viewAudioGallery.querySelector('[data-audio-folder="fondos"]')?.addEventListener('click', () => changeView('audioFondos'));
+      viewAudioGallery.querySelector('[data-open-audio-mixer]')?.addEventListener('click', openAudioMixerModal);
+    }
+
+    function openAudioMixerModal() {
+      const voces = Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content audio-trim-modal">
+          <h3 class="section-title">Preview de mezcla (Web Audio)</h3>
+          <p class="muted">Selecciona una voz y un fondo para escuchar una mezcla sincronizada. La reproducción termina con la duración de la voz.</p>
+          <div class="audio-trim-modal__header">
+            <label class="audio-trim-modal__name-field">Voz
+              <select class="control-input" data-mixer-voice>
+                <option value="">Selecciona voz...</option>
+                ${voces.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || 'Voz sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <label class="audio-trim-modal__name-field">Fondo
+              <select class="control-input" data-mixer-bg>
+                <option value="">Sin fondo</option>
+                ${fondos.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || 'Fondo sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          <canvas class="audio-trim-modal__waveform" width="860" height="170" data-mixer-waveform></canvas>
+          <div class="audio-trim-modal__ranges">
+            <label>Volumen voz <span data-mixer-voice-label>100%</span>
+              <input type="range" min="0" max="1.6" step="0.01" value="1" data-mixer-voice-volume>
+            </label>
+            <label>Volumen fondo <span data-mixer-bg-label>45%</span>
+              <input type="range" min="0" max="1.6" step="0.01" value="0.45" data-mixer-bg-volume>
+            </label>
+            <label>Inicio del fondo <span data-mixer-bg-offset-label>00:00.000</span>
+              <input type="range" min="0" max="0" step="0.01" value="0" data-mixer-bg-offset>
+            </label>
+          </div>
+          <p class="audio-library-feedback" aria-live="polite" data-mixer-feedback>${!voces.length ? 'No hay voces cargadas todavía.' : 'Selecciona una voz para comenzar.'}</p>
+          <div class="actions">
+            <button type="button" class="neon-btn" data-mixer-close>Cerrar</button>
+            <button type="button" class="neon-btn" data-mixer-play-pause ${!voces.length ? 'disabled' : ''}>▶ Play preview</button>
+            <button type="button" class="neon-btn neon-btn--primary" data-mixer-export ${!voces.length ? 'disabled' : ''}>⬇️ Exportar WAV</button>
+          </div>
+        </article>
+      `;
+      document.body.appendChild(modal);
+
+      const voiceSelect = modal.querySelector('[data-mixer-voice]');
+      const bgSelect = modal.querySelector('[data-mixer-bg]');
+      const voiceVolumeInput = modal.querySelector('[data-mixer-voice-volume]');
+      const bgVolumeInput = modal.querySelector('[data-mixer-bg-volume]');
+      const bgOffsetInput = modal.querySelector('[data-mixer-bg-offset]');
+      const voiceVolumeLabel = modal.querySelector('[data-mixer-voice-label]');
+      const bgVolumeLabel = modal.querySelector('[data-mixer-bg-label]');
+      const bgOffsetLabel = modal.querySelector('[data-mixer-bg-offset-label]');
+      const playPauseBtn = modal.querySelector('[data-mixer-play-pause]');
+      const exportBtn = modal.querySelector('[data-mixer-export]');
+      const closeBtn = modal.querySelector('[data-mixer-close]');
+      const feedbackEl = modal.querySelector('[data-mixer-feedback]');
+      const waveformCanvas = modal.querySelector('[data-mixer-waveform]');
+
+      const decodedCache = new Map();
+      let playbackTimeout = null;
+      let isPlaying = false;
+      let voiceSourceNode = null;
+      let bgSourceNode = null;
+      let voiceGain = null;
+      let bgGain = null;
+      let stopAtTime = 0;
+
+      const updateVolumeLabels = () => {
+        const voiceVolume = Math.max(0, Number(voiceVolumeInput?.value) || 0);
+        const bgVolume = Math.max(0, Number(bgVolumeInput?.value) || 0);
+        voiceVolumeLabel.textContent = `${Math.round(voiceVolume * 100)}%`;
+        bgVolumeLabel.textContent = `${Math.round(bgVolume * 100)}%`;
+      };
+
+      const stopPlayback = ({ updateButton = true } = {}) => {
+        if (playbackTimeout) {
+          clearTimeout(playbackTimeout);
+          playbackTimeout = null;
+        }
+        [voiceSourceNode, bgSourceNode].forEach((node) => {
+          if (!node) return;
+          try {
+            node.stop();
+          } catch (_) {}
+          try {
+            node.disconnect();
+          } catch (_) {}
+        });
+        [voiceGain, bgGain].forEach((node) => {
+          if (!node) return;
+          try {
+            node.disconnect();
+          } catch (_) {}
+        });
+        voiceSourceNode = null;
+        bgSourceNode = null;
+        voiceGain = null;
+        bgGain = null;
+        stopAtTime = 0;
+        isPlaying = false;
+        if (updateButton && playPauseBtn) playPauseBtn.textContent = '▶ Play preview';
+      };
+
+      const closeModal = () => {
+        stopPlayback();
+        modal.remove();
+      };
+
+      const findAudioById = (category, audioId) => {
+        const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
+        return items.find((item) => item.id === audioId) || null;
+      };
+
+      const decodeWithCache = async (cacheKey, url) => {
+        if (!url) return null;
+        if (decodedCache.has(cacheKey)) return decodedCache.get(cacheKey);
+        const decoded = await decodeAudioBufferFromUrl(url);
+        decodedCache.set(cacheKey, decoded);
+        return decoded;
+      };
+
+      const refreshWaveform = async () => {
+        const voiceId = String(voiceSelect?.value || '');
+        if (!voiceId) return;
+        const voiceItem = findAudioById('voces', voiceId);
+        if (!voiceItem?.url) return;
+        const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
+        renderAudioWaveform(waveformCanvas, voiceBuffer, {
+          trimStart: 0,
+          trimEnd: voiceBuffer.duration,
+          zoom: 1
+        });
+        const bgOffset = Math.max(0, Number(bgOffsetInput?.value) || 0);
+        drawAudioMixerBackgroundMarker(waveformCanvas, bgOffset, voiceBuffer.duration);
+      };
+
+      const updateBgOffsetLimits = async () => {
+        const bgId = String(bgSelect?.value || '');
+        if (!bgId) {
+          bgOffsetInput.max = '0';
+          bgOffsetInput.value = '0';
+          bgOffsetLabel.textContent = formatAudioEditTime(0);
+          await refreshWaveform();
+          return;
+        }
+        const bgItem = findAudioById('fondos', bgId);
+        if (!bgItem?.url) return;
+        const bgBuffer = await decodeWithCache(`b:${bgItem.id}`, bgItem.url);
+        const maxOffset = Math.max(0, Number(bgBuffer.duration.toFixed(3)));
+        bgOffsetInput.max = String(maxOffset);
+        if (Number(bgOffsetInput.value) > maxOffset) bgOffsetInput.value = String(maxOffset);
+        bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput.value) || 0);
+        await refreshWaveform();
+      };
+
+      const playPreview = async () => {
+        const voiceId = String(voiceSelect?.value || '');
+        if (!voiceId) throw new Error('Selecciona una voz antes de reproducir.');
+        const voiceItem = findAudioById('voces', voiceId);
+        if (!voiceItem?.url) throw new Error('La voz seleccionada no tiene URL válida.');
+        const bgId = String(bgSelect?.value || '');
+        const bgItem = bgId ? findAudioById('fondos', bgId) : null;
+
+        stopPlayback({ updateButton: false });
+        const context = getSharedAudioContext();
+        if (context.state === 'suspended') await context.resume();
+
+        const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
+        const bgBuffer = bgItem?.url ? await decodeWithCache(`b:${bgItem.id}`, bgItem.url) : null;
+        const startAt = context.currentTime + 0.05;
+        const voiceDuration = Math.max(0.01, voiceBuffer.duration || 0.01);
+        const stopAt = startAt + voiceDuration;
+        stopAtTime = stopAt;
+
+        voiceSourceNode = context.createBufferSource();
+        voiceSourceNode.buffer = voiceBuffer;
+        voiceGain = context.createGain();
+        voiceGain.gain.value = Math.max(0, Number(voiceVolumeInput.value) || 0);
+        voiceSourceNode.connect(voiceGain);
+        voiceGain.connect(context.destination);
+        voiceSourceNode.start(startAt, 0, voiceDuration);
+        voiceSourceNode.stop(stopAt);
+
+        if (bgBuffer) {
+          const bgOffset = Math.max(0, Number(bgOffsetInput.value) || 0);
+          const bgDuration = Math.min(voiceDuration, Math.max(0, bgBuffer.duration - bgOffset));
+          if (bgDuration > 0) {
+            bgSourceNode = context.createBufferSource();
+            bgSourceNode.buffer = bgBuffer;
+            bgGain = context.createGain();
+            bgGain.gain.value = Math.max(0, Number(bgVolumeInput.value) || 0);
+            bgSourceNode.connect(bgGain);
+            bgGain.connect(context.destination);
+            bgSourceNode.start(startAt, bgOffset, bgDuration);
+            bgSourceNode.stop(stopAt);
+          }
+        }
+
+        const remainingMs = Math.max(0, Math.round((stopAt - context.currentTime) * 1000));
+        playbackTimeout = setTimeout(() => {
+          stopPlayback();
+          feedbackEl.classList.remove('is-error');
+          feedbackEl.textContent = 'Preview finalizado.';
+        }, remainingMs + 60);
+
+        isPlaying = true;
+        playPauseBtn.textContent = '⏸ Pause preview';
+      };
+
+      const onVolumeInput = () => {
+        updateVolumeLabels();
+        if (voiceGain) voiceGain.gain.value = Math.max(0, Number(voiceVolumeInput.value) || 0);
+        if (bgGain) bgGain.gain.value = Math.max(0, Number(bgVolumeInput.value) || 0);
+      };
+
+      updateVolumeLabels();
+      bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput?.value) || 0);
+
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      closeBtn?.addEventListener('click', closeModal);
+
+      voiceSelect?.addEventListener('change', async () => {
+        stopPlayback();
+        try {
+          feedbackEl.classList.remove('is-error');
+          feedbackEl.textContent = 'Cargando vista previa de voz...';
+          await refreshWaveform();
+          feedbackEl.textContent = 'Voz lista. Puedes reproducir el preview.';
+        } catch (err) {
+          feedbackEl.classList.add('is-error');
+          feedbackEl.textContent = err?.message || 'No se pudo cargar la voz seleccionada.';
+        }
+      });
+
+      bgSelect?.addEventListener('change', async () => {
+        stopPlayback();
+        try {
+          feedbackEl.classList.remove('is-error');
+          await updateBgOffsetLimits();
+          feedbackEl.textContent = 'Fondo actualizado en el preview.';
+        } catch (err) {
+          feedbackEl.classList.add('is-error');
+          feedbackEl.textContent = err?.message || 'No se pudo cargar el fondo seleccionado.';
+        }
+      });
+
+      bgOffsetInput?.addEventListener('input', async () => {
+        bgOffsetLabel.textContent = formatAudioEditTime(Number(bgOffsetInput.value) || 0);
+        await refreshWaveform();
+      });
+      voiceVolumeInput?.addEventListener('input', onVolumeInput);
+      bgVolumeInput?.addEventListener('input', onVolumeInput);
+
+      playPauseBtn?.addEventListener('click', async () => {
+        if (isPlaying) {
+          stopPlayback();
+          return;
+        }
+        playPauseBtn.disabled = true;
+        feedbackEl.classList.remove('is-error');
+        feedbackEl.textContent = 'Preparando preview...';
+        try {
+          await playPreview();
+          feedbackEl.textContent = 'Reproduciendo mezcla sincronizada.';
+        } catch (err) {
+          stopPlayback();
+          feedbackEl.classList.add('is-error');
+          feedbackEl.textContent = err?.message || 'No se pudo reproducir la mezcla.';
+        } finally {
+          playPauseBtn.disabled = false;
+        }
+      });
+
+      exportBtn?.addEventListener('click', async () => {
+        exportBtn.disabled = true;
+        feedbackEl.classList.remove('is-error');
+        feedbackEl.textContent = 'Renderizando mezcla WAV...';
+        try {
+          const voiceId = String(voiceSelect?.value || '');
+          if (!voiceId) throw new Error('Selecciona una voz para exportar.');
+          const voiceItem = findAudioById('voces', voiceId);
+          if (!voiceItem?.url) throw new Error('La voz seleccionada no tiene URL válida.');
+          const bgId = String(bgSelect?.value || '');
+          const bgItem = bgId ? findAudioById('fondos', bgId) : null;
+          const voiceBuffer = await decodeWithCache(`v:${voiceItem.id}`, voiceItem.url);
+          const bgBuffer = bgItem?.url ? await decodeWithCache(`b:${bgItem.id}`, bgItem.url) : null;
+          const mixedBuffer = await createMixedAudioBuffer({
+            voiceBuffer,
+            backgroundBuffer: bgBuffer,
+            voiceVolume: Number(voiceVolumeInput.value) || 1,
+            backgroundVolume: Number(bgVolumeInput.value) || 0.45,
+            backgroundOffset: Number(bgOffsetInput.value) || 0
+          });
+          const wavBlob = audioBufferToWavBlob(mixedBuffer);
+          const objectUrl = URL.createObjectURL(wavBlob);
+          const a = document.createElement('a');
+          a.href = objectUrl;
+          a.download = `mezcla-${cssSafe(voiceItem.name || 'voz')}.wav`;
+          a.click();
+          URL.revokeObjectURL(objectUrl);
+          feedbackEl.textContent = 'Exportación WAV completada.';
+        } catch (err) {
+          feedbackEl.classList.add('is-error');
+          feedbackEl.textContent = err?.message || 'No se pudo exportar el WAV.';
+        } finally {
+          exportBtn.disabled = false;
+        }
+      });
     }
 
     function renderAudioCategoryView(category) {
