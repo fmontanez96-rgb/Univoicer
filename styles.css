@@ -4538,6 +4538,24 @@
   gap: .8rem;
 }
 
+.audio-trim-modal__header {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr);
+  gap: .7rem;
+  align-items: end;
+}
+
+.audio-trim-modal__name-field,
+.audio-trim-modal__zoom-field {
+  display: grid;
+  gap: .35rem;
+  font-size: .9rem;
+}
+
+.audio-trim-modal__zoom-field input[type="range"] {
+  width: 100%;
+}
+
 .audio-trim-modal__subtitle {
   margin: 0;
 }
@@ -4577,6 +4595,10 @@
 }
 
 @media (max-width: 720px) {
+  .audio-trim-modal__header {
+    grid-template-columns: 1fr;
+  }
+
   .audio-trim-modal__ranges {
     grid-template-columns: 1fr;
   }

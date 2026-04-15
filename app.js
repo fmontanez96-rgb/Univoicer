@@ -1614,7 +1614,7 @@
       return new Blob([arrayBuffer], { type: 'audio/wav' });
     }
 
-    function renderAudioWaveform(canvas, buffer, { trimStart = 0, trimEnd = null } = {}) {
+    function renderAudioWaveform(canvas, buffer, { trimStart = 0, trimEnd = null, zoom = 1, playbackTime = null } = {}) {
       if (!canvas || !buffer) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -1624,8 +1624,16 @@
       const duration = buffer.duration || 1;
       const start = Math.max(0, Math.min(duration, Number(trimStart) || 0));
       const end = Math.max(start, Math.min(duration, trimEnd === null ? duration : Number(trimEnd)));
+      const safeZoom = Math.max(1, Number(zoom) || 1);
+      const visibleDuration = Math.max(0.1, duration / safeZoom);
+      const selectionMiddle = (start + end) / 2;
+      const windowStart = Math.max(0, Math.min(duration - visibleDuration, selectionMiddle - (visibleDuration / 2)));
+      const windowEnd = Math.min(duration, windowStart + visibleDuration);
       const channelData = buffer.getChannelData(0);
-      const samplesPerPixel = Math.max(1, Math.floor(channelData.length / width));
+      const windowStartSample = Math.floor((windowStart / duration) * channelData.length);
+      const windowEndSample = Math.max(windowStartSample + 1, Math.floor((windowEnd / duration) * channelData.length));
+      const visibleSampleCount = Math.max(1, windowEndSample - windowStartSample);
+      const samplesPerPixel = Math.max(1, Math.floor(visibleSampleCount / width));
 
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = 'rgba(6, 13, 32, 0.95)';
@@ -1638,8 +1646,8 @@
 
       const midY = height / 2;
       for (let x = 0; x < width; x += 1) {
-        const sampleStart = x * samplesPerPixel;
-        const sampleEnd = Math.min(channelData.length, sampleStart + samplesPerPixel);
+        const sampleStart = windowStartSample + (x * samplesPerPixel);
+        const sampleEnd = Math.min(windowEndSample, sampleStart + samplesPerPixel);
         let min = 1;
         let max = -1;
         for (let i = sampleStart; i < sampleEnd; i += 1) {
@@ -1652,14 +1660,26 @@
         ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
       }
 
-      const startX = Math.round((start / duration) * width);
-      const endX = Math.round((end / duration) * width);
+      const toX = (time) => Math.round(((time - windowStart) / (windowEnd - windowStart || 1)) * width);
+      const startX = Math.max(0, Math.min(width, toX(start)));
+      const endX = Math.max(startX, Math.min(width, toX(end)));
       ctx.fillStyle = 'rgba(8, 16, 35, 0.68)';
       ctx.fillRect(0, 0, startX, height);
       ctx.fillRect(endX, 0, width - endX, height);
       ctx.strokeStyle = 'rgba(133, 252, 220, 0.9)';
       ctx.lineWidth = 2;
       ctx.strokeRect(startX, 1, Math.max(1, endX - startX), height - 2);
+
+      if (playbackTime !== null) {
+        const current = Math.max(windowStart, Math.min(windowEnd, Number(playbackTime) || 0));
+        const playheadX = Math.max(0, Math.min(width, toX(current)));
+        ctx.strokeStyle = 'rgba(255, 211, 92, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(playheadX, 0);
+        ctx.lineTo(playheadX, height);
+        ctx.stroke();
+      }
     }
 
     async function replaceAudioLibraryItemContent(category, audioId, blob) {
@@ -1706,7 +1726,15 @@
       modal.innerHTML = `
         <article class="detail-content audio-trim-modal">
           <h3 class="section-title">Editor de audio</h3>
-          <p class="muted audio-trim-modal__subtitle">${escapeHtml(audioItem.name || 'Audio')}</p>
+          <div class="audio-trim-modal__header">
+            <label class="audio-trim-modal__name-field">Nombre del archivo
+              <input type="text" class="control-input" data-trim-name value="${escapeHtml(audioItem.name || 'Audio')}">
+            </label>
+            <label class="audio-trim-modal__zoom-field">Zoom de onda
+              <input type="range" min="1" max="8" step="0.5" value="1" data-trim-zoom>
+            </label>
+          </div>
+          <p class="muted audio-trim-modal__subtitle">Revisa visualmente el tramo a eliminar. La barra vertical marca la reproducción en tiempo real.</p>
           <canvas class="audio-trim-modal__waveform" width="860" height="170"></canvas>
           <div class="audio-trim-modal__ranges">
             <label>Inicio del recorte
@@ -1732,6 +1760,8 @@
       const waveform = modal.querySelector('.audio-trim-modal__waveform');
       const startInput = modal.querySelector('[data-trim-start]');
       const endInput = modal.querySelector('[data-trim-end]');
+      const zoomInput = modal.querySelector('[data-trim-zoom]');
+      const nameInput = modal.querySelector('[data-trim-name]');
       const timesEl = modal.querySelector('[data-trim-times]');
       const feedbackEl = modal.querySelector('[data-trim-feedback]');
       const previewEl = modal.querySelector('[data-trim-preview]');
@@ -1762,6 +1792,8 @@
         const decodedBuffer = await audioContext.decodeAudioData(fileBytes.slice(0));
         const historyStack = [];
         let workingBuffer = extractAudioBufferRange(decodedBuffer, 0, decodedBuffer.duration);
+        let zoomFactor = 1;
+        let playbackTime = 0;
 
         const refreshPreview = () => {
           const clipBlob = audioBufferToWavBlob(workingBuffer);
@@ -1784,7 +1816,12 @@
           const end = Number(endInput.value || 0);
           const selected = Math.max(0, end - start);
           timesEl.textContent = `Duración total: ${formatAudioEditTime(workingBuffer.duration)} · tramo a eliminar: ${formatAudioEditTime(start)} → ${formatAudioEditTime(end)} (${formatAudioEditTime(selected)})`;
-          renderAudioWaveform(waveform, workingBuffer, { trimStart: start, trimEnd: end });
+          renderAudioWaveform(waveform, workingBuffer, {
+            trimStart: start,
+            trimEnd: end,
+            zoom: zoomFactor,
+            playbackTime
+          });
         };
 
         refreshPreview();
@@ -1805,6 +1842,22 @@
           }
           refreshSelectionInfo();
         });
+        zoomInput?.addEventListener('input', () => {
+          zoomFactor = Math.max(1, Number(zoomInput.value) || 1);
+          refreshSelectionInfo();
+        });
+        previewEl.addEventListener('timeupdate', () => {
+          playbackTime = Number(previewEl.currentTime) || 0;
+          refreshSelectionInfo();
+        });
+        previewEl.addEventListener('seeked', () => {
+          playbackTime = Number(previewEl.currentTime) || 0;
+          refreshSelectionInfo();
+        });
+        previewEl.addEventListener('ended', () => {
+          playbackTime = Number(previewEl.currentTime) || 0;
+          refreshSelectionInfo();
+        });
 
         cutBtn?.addEventListener('click', () => {
           const start = Number(startInput.value || 0);
@@ -1816,6 +1869,8 @@
           }
           historyStack.push(workingBuffer);
           workingBuffer = removeAudioSegment(workingBuffer, start, end);
+          playbackTime = 0;
+          previewEl.currentTime = 0;
           refreshPreview();
           refreshTimelineLimits();
           refreshSelectionInfo();
@@ -1828,6 +1883,8 @@
         undoBtn?.addEventListener('click', () => {
           if (!historyStack.length) return;
           workingBuffer = historyStack.pop();
+          playbackTime = Math.min(playbackTime, workingBuffer.duration);
+          previewEl.currentTime = playbackTime;
           refreshPreview();
           refreshTimelineLimits();
           refreshSelectionInfo();
@@ -1847,10 +1904,13 @@
           try {
             const outputBlob = audioBufferToWavBlob(workingBuffer);
             await replaceAudioLibraryItemContent(normalizedCategory, audioId, outputBlob);
+            if (nameInput && nameInput.value.trim() !== String(audioItem.name || '').trim()) {
+              renameAudioLibraryItem(normalizedCategory, audioId, nameInput.value.trim());
+            }
             setAudioUploadStatus(normalizedCategory, {
               loading: false,
               error: '',
-              success: `Audio "${audioItem.name || 'sin nombre'}" recortado y guardado.`
+              success: `Audio "${nameInput?.value?.trim() || audioItem.name || 'sin nombre'}" actualizado y guardado.`
             });
             renderAudioCategoryView(normalizedCategory);
             closeModal();
