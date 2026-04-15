@@ -1581,6 +1581,71 @@
       return nextBuffer;
     }
 
+    function mixVoiceWithBackground(voiceBuffer, bgBuffer, options = {}) {
+      if (!voiceBuffer || !bgBuffer) {
+        throw new Error('Se necesitan voiceBuffer y bgBuffer para mezclar el audio.');
+      }
+
+      const {
+        backgroundStartOffsetSec = 0,
+        shortBackgroundBehavior = 'none',
+        voiceVolume = 1,
+        backgroundVolume = 1
+      } = options;
+
+      const context = getSharedAudioContext();
+      const outputSampleRate = voiceBuffer.sampleRate;
+      const voiceLength = Math.max(0, voiceBuffer.length);
+      const outputLength = voiceLength;
+      const outputChannels = Math.max(voiceBuffer.numberOfChannels, bgBuffer.numberOfChannels, 1);
+      const mixedBuffer = context.createBuffer(outputChannels, outputLength, outputSampleRate);
+
+      const bgSliceStart = Math.max(0, Number(backgroundStartOffsetSec) || 0);
+      const bgStartSample = Math.min(bgBuffer.length, Math.floor(bgSliceStart * bgBuffer.sampleRate));
+      const availableBgSamples = Math.max(0, bgBuffer.length - bgStartSample);
+      const bgResampleRatio = bgBuffer.sampleRate / outputSampleRate;
+      const bgAvailableOnOutput = Math.max(0, Math.floor(availableBgSamples / (bgResampleRatio || 1)));
+      const bgSamplesToMix = Math.min(outputLength, bgAvailableOnOutput);
+
+      const normalizedBehavior = String(shortBackgroundBehavior || 'none').toLowerCase();
+      let bgOutputStart = 0;
+      if (normalizedBehavior === 'padstart' && bgSamplesToMix < outputLength) {
+        bgOutputStart = outputLength - bgSamplesToMix;
+      }
+      const bgOutputEnd = Math.min(outputLength, bgOutputStart + bgSamplesToMix);
+
+      const safeVoiceVolume = Number.isFinite(voiceVolume) ? voiceVolume : 1;
+      const safeBackgroundVolume = Number.isFinite(backgroundVolume) ? backgroundVolume : 1;
+
+      for (let channel = 0; channel < outputChannels; channel += 1) {
+        const target = mixedBuffer.getChannelData(channel);
+
+        const voiceChannelIndex = voiceBuffer.numberOfChannels === 1
+          ? 0
+          : Math.min(channel, voiceBuffer.numberOfChannels - 1);
+        const voiceData = voiceBuffer.getChannelData(voiceChannelIndex);
+        for (let sample = 0; sample < outputLength; sample += 1) {
+          const voiceSample = sample < voiceData.length ? voiceData[sample] : 0;
+          target[sample] = voiceSample * safeVoiceVolume;
+        }
+
+        if (bgSamplesToMix <= 0) continue;
+        const bgChannelIndex = bgBuffer.numberOfChannels === 1
+          ? 0
+          : Math.min(channel, bgBuffer.numberOfChannels - 1);
+        const bgData = bgBuffer.getChannelData(bgChannelIndex);
+
+        for (let outputIndex = bgOutputStart; outputIndex < bgOutputEnd; outputIndex += 1) {
+          const relativeIndex = outputIndex - bgOutputStart;
+          const bgIndex = bgStartSample + Math.floor(relativeIndex * bgResampleRatio);
+          if (bgIndex < 0 || bgIndex >= bgBuffer.length) continue;
+          target[outputIndex] += bgData[bgIndex] * safeBackgroundVolume;
+        }
+      }
+
+      return mixedBuffer;
+    }
+
     function audioBufferToWavBlob(buffer) {
       const channels = buffer.numberOfChannels;
       const sampleRate = buffer.sampleRate;
