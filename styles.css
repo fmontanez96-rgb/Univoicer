@@ -4531,3 +4531,53 @@
   flex: 1 1 280px;
   min-width: 220px;
 }
+
+.audio-trim-modal {
+  width: min(940px, 96vw);
+  display: grid;
+  gap: .8rem;
+}
+
+.audio-trim-modal__subtitle {
+  margin: 0;
+}
+
+.audio-trim-modal__waveform {
+  width: 100%;
+  max-width: 100%;
+  border-radius: .7rem;
+  border: 1px solid rgba(147, 227, 255, .42);
+  background: rgba(6, 13, 32, 0.95);
+}
+
+.audio-trim-modal__ranges {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .7rem;
+}
+
+.audio-trim-modal__ranges label {
+  display: grid;
+  gap: .35rem;
+  font-size: .9rem;
+}
+
+.audio-trim-modal__ranges input[type="range"] {
+  width: 100%;
+}
+
+.audio-trim-modal__times {
+  margin: 0;
+  font-size: .9rem;
+  opacity: .9;
+}
+
+.audio-trim-modal audio {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .audio-trim-modal__ranges {
+    grid-template-columns: 1fr;
+  }
+}

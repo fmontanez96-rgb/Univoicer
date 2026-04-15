@@ -101,6 +101,7 @@
     let firebaseStorage = null;
     let cloudSyncTimer = null;
     let collectionModel = createEmptyCollectionModel();
+    let sharedAudioContext = null;
 
     let marathonPlayer = null;
     let marathonPlayerReady = false;
@@ -1519,6 +1520,352 @@
       };
       state.audioLibrary[normalizedCategory] = currentItems;
       saveAudioLibrary();
+    }
+
+    function formatAudioEditTime(seconds) {
+      const safeSeconds = Math.max(0, Number(seconds) || 0);
+      const mins = Math.floor(safeSeconds / 60);
+      const secs = Math.floor(safeSeconds % 60);
+      const millis = Math.round((safeSeconds - Math.floor(safeSeconds)) * 1000);
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+    }
+
+    function extractAudioBufferRange(buffer, startTime, endTime) {
+      const safeStart = Math.max(0, Number(startTime) || 0);
+      const safeEnd = Math.max(safeStart, Number(endTime) || 0);
+      const sampleRate = buffer.sampleRate;
+      const startIndex = Math.max(0, Math.floor(safeStart * sampleRate));
+      const endIndex = Math.min(buffer.length, Math.floor(safeEnd * sampleRate));
+      const nextLength = Math.max(0, endIndex - startIndex);
+      const context = getSharedAudioContext();
+      const nextBuffer = context.createBuffer(buffer.numberOfChannels, nextLength, sampleRate);
+      for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+        const source = buffer.getChannelData(channel).subarray(startIndex, endIndex);
+        nextBuffer.copyToChannel(source, channel, 0);
+      }
+      return nextBuffer;
+    }
+
+    function removeAudioSegment(buffer, cutStart, cutEnd) {
+      const safeStart = Math.max(0, Number(cutStart) || 0);
+      const safeEnd = Math.min(buffer.duration, Math.max(safeStart, Number(cutEnd) || 0));
+      if (safeEnd <= safeStart) return buffer;
+
+      const sampleRate = buffer.sampleRate;
+      const startIndex = Math.max(0, Math.floor(safeStart * sampleRate));
+      const endIndex = Math.min(buffer.length, Math.floor(safeEnd * sampleRate));
+      const removedLength = Math.max(0, endIndex - startIndex);
+      if (!removedLength) return buffer;
+
+      const nextLength = buffer.length - removedLength;
+      const context = getSharedAudioContext();
+      const nextBuffer = context.createBuffer(buffer.numberOfChannels, nextLength, sampleRate);
+
+      for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+        const source = buffer.getChannelData(channel);
+        const target = nextBuffer.getChannelData(channel);
+        target.set(source.subarray(0, startIndex), 0);
+        target.set(source.subarray(endIndex), startIndex);
+      }
+      return nextBuffer;
+    }
+
+    function audioBufferToWavBlob(buffer) {
+      const channels = buffer.numberOfChannels;
+      const sampleRate = buffer.sampleRate;
+      const bytesPerSample = 2;
+      const blockAlign = channels * bytesPerSample;
+      const dataLength = buffer.length * blockAlign;
+      const totalLength = 44 + dataLength;
+      const arrayBuffer = new ArrayBuffer(totalLength);
+      const view = new DataView(arrayBuffer);
+
+      function writeString(offset, text) {
+        for (let i = 0; i < text.length; i += 1) {
+          view.setUint8(offset + i, text.charCodeAt(i));
+        }
+      }
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataLength, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, channels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * blockAlign, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataLength, true);
+
+      let offset = 44;
+      const channelData = Array.from({ length: channels }, (_, channel) => buffer.getChannelData(channel));
+      for (let i = 0; i < buffer.length; i += 1) {
+        for (let channel = 0; channel < channels; channel += 1) {
+          const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
+          const value = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+          view.setInt16(offset, value, true);
+          offset += 2;
+        }
+      }
+
+      return new Blob([arrayBuffer], { type: 'audio/wav' });
+    }
+
+    function renderAudioWaveform(canvas, buffer, { trimStart = 0, trimEnd = null } = {}) {
+      if (!canvas || !buffer) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const duration = buffer.duration || 1;
+      const start = Math.max(0, Math.min(duration, Number(trimStart) || 0));
+      const end = Math.max(start, Math.min(duration, trimEnd === null ? duration : Number(trimEnd)));
+      const channelData = buffer.getChannelData(0);
+      const samplesPerPixel = Math.max(1, Math.floor(channelData.length / width));
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = 'rgba(6, 13, 32, 0.95)';
+      ctx.fillRect(0, 0, width, height);
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, 'rgba(130, 220, 255, 0.95)');
+      gradient.addColorStop(1, 'rgba(78, 121, 255, 0.9)');
+      ctx.fillStyle = gradient;
+
+      const midY = height / 2;
+      for (let x = 0; x < width; x += 1) {
+        const sampleStart = x * samplesPerPixel;
+        const sampleEnd = Math.min(channelData.length, sampleStart + samplesPerPixel);
+        let min = 1;
+        let max = -1;
+        for (let i = sampleStart; i < sampleEnd; i += 1) {
+          const value = channelData[i];
+          if (value < min) min = value;
+          if (value > max) max = value;
+        }
+        const y1 = midY + min * midY * 0.9;
+        const y2 = midY + max * midY * 0.9;
+        ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+      }
+
+      const startX = Math.round((start / duration) * width);
+      const endX = Math.round((end / duration) * width);
+      ctx.fillStyle = 'rgba(8, 16, 35, 0.68)';
+      ctx.fillRect(0, 0, startX, height);
+      ctx.fillRect(endX, 0, width - endX, height);
+      ctx.strokeStyle = 'rgba(133, 252, 220, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(startX, 1, Math.max(1, endX - startX), height - 2);
+    }
+
+    async function replaceAudioLibraryItemContent(category, audioId, blob) {
+      const normalizedCategory = category === 'fondos' ? 'fondos' : 'voces';
+      if (!firebaseStorage) throw new Error('Firebase Storage no está disponible en esta sesión.');
+
+      const currentItems = Array.isArray(state.audioLibrary?.[normalizedCategory]) ? state.audioLibrary[normalizedCategory] : [];
+      const targetIndex = currentItems.findIndex((item) => item.id === audioId);
+      if (targetIndex < 0) throw new Error('No encontramos el audio seleccionado.');
+      const targetItem = currentItems[targetIndex];
+      const storagePath = String(targetItem.path || '').trim();
+      if (!storagePath) throw new Error('Este audio no tiene path de storage, no se puede reemplazar.');
+
+      const ref = firebaseStorage.ref(storagePath);
+      const uploadTask = ref.put(blob, {
+        contentType: 'audio/wav',
+        customMetadata: {
+          category: normalizedCategory,
+          editedAt: String(Date.now())
+        }
+      });
+      const snapshot = await uploadWithTimeout(uploadTask, 30000);
+      const url = await snapshot.ref.getDownloadURL();
+
+      currentItems[targetIndex] = {
+        ...targetItem,
+        url,
+        size: Number(blob.size) || targetItem.size || 0,
+        contentType: 'audio/wav',
+        updatedAt: Date.now()
+      };
+      state.audioLibrary[normalizedCategory] = currentItems;
+      saveAudioLibrary();
+    }
+
+    async function openAudioTrimEditorModal(category, audioId) {
+      const normalizedCategory = category === 'fondos' ? 'fondos' : 'voces';
+      const items = Array.isArray(state.audioLibrary?.[normalizedCategory]) ? state.audioLibrary[normalizedCategory] : [];
+      const audioItem = items.find((item) => item.id === audioId);
+      if (!audioItem?.url) return;
+
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content audio-trim-modal">
+          <h3 class="section-title">Editor de audio</h3>
+          <p class="muted audio-trim-modal__subtitle">${escapeHtml(audioItem.name || 'Audio')}</p>
+          <canvas class="audio-trim-modal__waveform" width="860" height="170"></canvas>
+          <div class="audio-trim-modal__ranges">
+            <label>Inicio del recorte
+              <input type="range" min="0" max="0" step="0.01" value="0" data-trim-start>
+            </label>
+            <label>Fin del recorte
+              <input type="range" min="0" max="0" step="0.01" value="0" data-trim-end>
+            </label>
+          </div>
+          <p class="audio-trim-modal__times" data-trim-times>Selecciona un tramo para eliminar.</p>
+          <audio controls preload="none" data-trim-preview></audio>
+          <p class="audio-library-feedback" aria-live="polite" data-trim-feedback></p>
+          <div class="actions">
+            <button type="button" class="neon-btn" data-trim-cut>✂️ Cortar tramo</button>
+            <button type="button" class="neon-btn" data-trim-undo disabled>↩️ Deshacer</button>
+            <button type="button" class="neon-btn" data-trim-cancel>Cerrar</button>
+            <button type="button" class="neon-btn neon-btn--primary" data-trim-save>💾 Guardar cambios</button>
+          </div>
+        </article>
+      `;
+      document.body.appendChild(modal);
+
+      const waveform = modal.querySelector('.audio-trim-modal__waveform');
+      const startInput = modal.querySelector('[data-trim-start]');
+      const endInput = modal.querySelector('[data-trim-end]');
+      const timesEl = modal.querySelector('[data-trim-times]');
+      const feedbackEl = modal.querySelector('[data-trim-feedback]');
+      const previewEl = modal.querySelector('[data-trim-preview]');
+      const cutBtn = modal.querySelector('[data-trim-cut]');
+      const undoBtn = modal.querySelector('[data-trim-undo]');
+      const saveBtn = modal.querySelector('[data-trim-save]');
+      const cancelBtn = modal.querySelector('[data-trim-cancel]');
+
+      const closeModal = () => {
+        if (previewEl?.dataset.objectUrl) {
+          URL.revokeObjectURL(previewEl.dataset.objectUrl);
+        }
+        modal.remove();
+      };
+
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      cancelBtn?.addEventListener('click', closeModal);
+
+      feedbackEl.textContent = 'Cargando audio...';
+
+      try {
+        const response = await fetch(audioItem.url);
+        if (!response.ok) throw new Error('No se pudo descargar el audio para editar.');
+        const fileBytes = await response.arrayBuffer();
+        const audioContext = getSharedAudioContext();
+        const decodedBuffer = await audioContext.decodeAudioData(fileBytes.slice(0));
+        const historyStack = [];
+        let workingBuffer = extractAudioBufferRange(decodedBuffer, 0, decodedBuffer.duration);
+
+        const refreshPreview = () => {
+          const clipBlob = audioBufferToWavBlob(workingBuffer);
+          if (previewEl.dataset.objectUrl) URL.revokeObjectURL(previewEl.dataset.objectUrl);
+          const objectUrl = URL.createObjectURL(clipBlob);
+          previewEl.src = objectUrl;
+          previewEl.dataset.objectUrl = objectUrl;
+        };
+
+        const refreshTimelineLimits = () => {
+          const max = Number(workingBuffer.duration.toFixed(3));
+          startInput.max = String(max);
+          endInput.max = String(max);
+          startInput.value = '0';
+          endInput.value = String(max);
+        };
+
+        const refreshSelectionInfo = () => {
+          const start = Number(startInput.value || 0);
+          const end = Number(endInput.value || 0);
+          const selected = Math.max(0, end - start);
+          timesEl.textContent = `Duración total: ${formatAudioEditTime(workingBuffer.duration)} · tramo a eliminar: ${formatAudioEditTime(start)} → ${formatAudioEditTime(end)} (${formatAudioEditTime(selected)})`;
+          renderAudioWaveform(waveform, workingBuffer, { trimStart: start, trimEnd: end });
+        };
+
+        refreshPreview();
+        refreshTimelineLimits();
+        refreshSelectionInfo();
+        feedbackEl.textContent = 'Selecciona el tramo a eliminar y usa "Cortar tramo".';
+        undoBtn.disabled = true;
+
+        startInput.addEventListener('input', () => {
+          if (Number(startInput.value) > Number(endInput.value)) {
+            endInput.value = startInput.value;
+          }
+          refreshSelectionInfo();
+        });
+        endInput.addEventListener('input', () => {
+          if (Number(endInput.value) < Number(startInput.value)) {
+            startInput.value = endInput.value;
+          }
+          refreshSelectionInfo();
+        });
+
+        cutBtn?.addEventListener('click', () => {
+          const start = Number(startInput.value || 0);
+          const end = Number(endInput.value || 0);
+          if (end <= start) {
+            feedbackEl.textContent = 'El tramo seleccionado es inválido. Ajusta inicio y fin.';
+            feedbackEl.classList.add('is-error');
+            return;
+          }
+          historyStack.push(workingBuffer);
+          workingBuffer = removeAudioSegment(workingBuffer, start, end);
+          refreshPreview();
+          refreshTimelineLimits();
+          refreshSelectionInfo();
+          feedbackEl.classList.remove('is-error');
+          feedbackEl.classList.add('is-success');
+          feedbackEl.textContent = 'Tramo eliminado en vista previa. Puedes deshacer o guardar.';
+          undoBtn.disabled = historyStack.length === 0;
+        });
+
+        undoBtn?.addEventListener('click', () => {
+          if (!historyStack.length) return;
+          workingBuffer = historyStack.pop();
+          refreshPreview();
+          refreshTimelineLimits();
+          refreshSelectionInfo();
+          feedbackEl.classList.remove('is-error');
+          feedbackEl.classList.add('is-success');
+          feedbackEl.textContent = 'Se deshizo el último recorte.';
+          undoBtn.disabled = historyStack.length === 0;
+        });
+
+        saveBtn?.addEventListener('click', async () => {
+          saveBtn.disabled = true;
+          cutBtn.disabled = true;
+          undoBtn.disabled = true;
+          feedbackEl.classList.remove('is-error');
+          feedbackEl.classList.remove('is-success');
+          feedbackEl.textContent = 'Guardando audio recortado...';
+          try {
+            const outputBlob = audioBufferToWavBlob(workingBuffer);
+            await replaceAudioLibraryItemContent(normalizedCategory, audioId, outputBlob);
+            setAudioUploadStatus(normalizedCategory, {
+              loading: false,
+              error: '',
+              success: `Audio "${audioItem.name || 'sin nombre'}" recortado y guardado.`
+            });
+            renderAudioCategoryView(normalizedCategory);
+            closeModal();
+          } catch (err) {
+            feedbackEl.classList.add('is-error');
+            feedbackEl.textContent = err?.message || 'No se pudo guardar el audio recortado.';
+            saveBtn.disabled = false;
+            cutBtn.disabled = false;
+            undoBtn.disabled = historyStack.length === 0;
+          }
+        });
+      } catch (err) {
+        feedbackEl.classList.add('is-error');
+        feedbackEl.textContent = err?.message || 'No se pudo abrir el editor de audio.';
+      }
     }
 
     function openMarkAsUsedModal(videoId) {
@@ -6001,7 +6348,7 @@
                   </div>
                   <audio controls preload="none" src="${escapeHtml(item.url || '')}" aria-label="Reproducir ${escapeHtml(item.name || 'audio')}"></audio>
                   <div class="audio-library-item-actions">
-                    <button type="button" class="neon-btn" data-edit-audio-item="${escapeHtml(item.id)}">✏️ Editar</button>
+                    <button type="button" class="neon-btn" data-edit-audio-item="${escapeHtml(item.id)}">✂️ Editar audio</button>
                     <button type="button" class="neon-btn audio-used-btn" data-mark-used-audio="${escapeHtml(item.id)}" aria-label="Marcar como usado y borrar ${escapeHtml(item.name || 'audio')}" title="Marcar audio como usado">✅ Usado</button>
                   </div>
                 </li>
@@ -6024,26 +6371,7 @@
         btn.addEventListener('click', () => {
           const audioId = String(btn.dataset.editAudioItem || '');
           if (!audioId) return;
-          const currentItem = (Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [])
-            .find((item) => item.id === audioId);
-          if (!currentItem) return;
-          const nextName = window.prompt('Editar nombre del audio:', currentItem.name || '');
-          if (nextName === null) return;
-          try {
-            renameAudioLibraryItem(category, audioId, nextName);
-            setAudioUploadStatus(category, {
-              loading: false,
-              error: '',
-              success: `Nombre actualizado a "${String(nextName || '').trim()}".`
-            });
-            renderAudioCategoryView(category);
-          } catch (err) {
-            setAudioUploadStatus(category, {
-              loading: false,
-              success: '',
-              error: err?.message || 'No se pudo editar el audio.'
-            });
-          }
+          openAudioTrimEditorModal(category, audioId);
         });
       });
       targetView.querySelectorAll('[data-mark-used-audio]').forEach((btn) => {
@@ -6057,6 +6385,14 @@
 
     function cssSafe(text) {
       return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-');
+    }
+
+    function getSharedAudioContext() {
+      if (sharedAudioContext) return sharedAudioContext;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error('Tu navegador no soporta edición de audio (AudioContext).');
+      sharedAudioContext = new AudioContextClass();
+      return sharedAudioContext;
     }
 
     function ensureYoutubeIframeApi() {
