@@ -1307,6 +1307,10 @@
     }
 
     function saveAudioLibrary() {
+      const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
+      state.audioLibrary = normalizedAudioLibrary;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
+      localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
       scheduleCloudSync();
     }
@@ -2280,6 +2284,9 @@
       if (!firebaseDb) return;
       clearTimeout(cloudSyncTimer);
       const updatedAt = Date.now();
+      const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
+      state.audioLibrary = normalizedAudioLibrary;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
       try {
         await firebaseDb.ref(CLOUD_STORAGE_PATH).set({
           updatedAt,
