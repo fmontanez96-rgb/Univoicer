@@ -4116,17 +4116,6 @@
             return;
           }
 
-          // VALIDAR SI YA EXISTE EN ESTE UNIVERSO
-          const yaExiste = VIDEOS.find(v => 
-            v.personaje.toLowerCase() === characterName.toLowerCase() && 
-            v.universo.includes(state.universe)
-          );
-
-          if (yaExiste) {
-            if (feedback) feedback.textContent = 'Este personaje ya está en el universo.';
-            return;
-          }
-          
           const rarezaValue = String(formData.get('rareza') || 'Común');
           const rawUrl = String(formData.get('url_youtube') || '').trim();
           const normalizedUrl = rawUrl ? normalizeYoutubeUrl(rawUrl) : '';
@@ -4138,7 +4127,22 @@
           const actorList = actorName
             ? [...new Set(actorName.split(',').map(item => item.trim()).filter(Boolean))]
             : ['Sin actor'];
-          actorList.forEach((actorItem, idx) => {
+          const normalizedCharacterName = normalizeName(characterName);
+          const actorListToCreate = actorList.filter((actorItem) => {
+            const normalizedActor = normalizeName(actorItem);
+            return !VIDEOS.some((video) => (
+              normalizeName(video.personaje || '') === normalizedCharacterName
+              && getVideoUniverses(video).some((universeName) => normalizeUniverseName(universeName) === normalizeUniverseName(state.universe))
+              && normalizeName(video.actor_de_doblaje || '') === normalizedActor
+            ));
+          });
+
+          if (!actorListToCreate.length) {
+            if (feedback) feedback.textContent = 'Ese actor ya está vinculado al personaje en este universo.';
+            return;
+          }
+
+          actorListToCreate.forEach((actorItem, idx) => {
             const unlocked = Boolean(normalizedUrl);
             VIDEOS.push({
               id: `${unlocked ? 'video' : 'video-bloqueado'}-${Date.now()}-${idx}`,
@@ -4163,8 +4167,8 @@
           refreshDependentViews();
 
           if (feedback) feedback.textContent = normalizedUrl
-            ? 'Personaje agregado y desbloqueado.'
-            : 'Personaje agregado como bloqueado.';
+            ? 'Actor/personaje agregado y desbloqueado.'
+            : 'Actor/personaje agregado como bloqueado.';
           addVideoForm.reset();
           state.showAddForm = false;
           renderUniverseView();
@@ -4485,7 +4489,9 @@
           return setCharacterProfileFeedback('Ese actor ya está vinculado al personaje.', 'error');
         }
         const canonicalActor = existingActor || actorName;
-        const baseUniverses = universes.length ? universes : ['Sin universo'];
+        const baseUniverses = (state.universe
+          ? [state.universe]
+          : getCharacterUniverseList(characterName, { fallbackToUnassigned: true }));
         VIDEOS.push({
           id: `video-${Date.now()}`,
           titulo: `Vínculo actor-personaje: ${characterName}`,
