@@ -2447,7 +2447,15 @@
         }
         buildAutoMarathonPlaylist();
       } catch (err) {
-        console.warn('No se pudo leer Firebase, usando almacenamiento local.', err);
+        const firebaseCode = String(err?.code || '').toLowerCase();
+        const firebaseMessage = String(err?.message || '').toLowerCase();
+        const isPermissionDenied = firebaseCode.includes('permission_denied') || firebaseMessage.includes('permission denied');
+
+        if (isPermissionDenied) {
+          console.info('Firebase sin permisos de lectura para esta sesión; se continuará con almacenamiento local.');
+        } else {
+          console.warn('No se pudo leer Firebase, usando almacenamiento local.', err);
+        }
         buildAutoMarathonPlaylist();
       }
     }
