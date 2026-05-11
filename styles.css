@@ -4698,12 +4698,49 @@
 }
 
 .audio-library-item {
+  --audio-item-accent: var(--accent);
+  --audio-item-accent-soft: rgba(43, 247, 255, .16);
+  --audio-item-accent-mid: rgba(43, 247, 255, .34);
+  --audio-item-bg: rgba(7, 12, 26, 0.42);
   display: grid;
   gap: .5rem;
-  padding: .75rem;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: .75rem;
-  background: rgba(7, 12, 26, 0.42);
+  padding: .85rem;
+  border: 1px solid var(--audio-item-accent-mid);
+  border-radius: .95rem;
+  background:
+    linear-gradient(145deg, var(--audio-item-accent-soft), rgba(7, 12, 26, .58) 46%, var(--audio-item-bg)),
+    rgba(7, 12, 26, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 10px 24px rgba(2, 8, 20, .24);
+  transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease, background .22s ease;
+}
+
+.audio-library-item--voice {
+  --audio-item-accent: #48ffa4;
+  --audio-item-accent-soft: rgba(72, 255, 164, .18);
+  --audio-item-accent-mid: rgba(72, 255, 164, .46);
+  --audio-item-bg: rgba(8, 48, 31, .34);
+}
+
+.audio-library-item--background {
+  --audio-item-accent: #ff5c73;
+  --audio-item-accent-soft: rgba(255, 92, 115, .18);
+  --audio-item-accent-mid: rgba(255, 92, 115, .46);
+  --audio-item-bg: rgba(60, 12, 22, .34);
+}
+
+.audio-library-item:hover,
+.audio-library-item:focus-within {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--audio-item-accent) 78%, #ffffff);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--audio-item-accent-soft) 72%, rgba(255, 255, 255, .08)), rgba(10, 18, 36, .66) 44%, var(--audio-item-bg)),
+    rgba(7, 12, 26, 0.5);
+  box-shadow: var(--shadow-soft), 0 0 0 1px var(--audio-item-accent-mid), 0 0 22px color-mix(in srgb, var(--audio-item-accent) 26%, transparent);
+}
+
+.audio-library-item:focus-within {
+  outline: none;
+  box-shadow: var(--focus-glow), 0 0 0 1px var(--audio-item-accent-mid), 0 0 24px color-mix(in srgb, var(--audio-item-accent) 28%, transparent);
 }
 
 .audio-library-item-name {
@@ -4835,4 +4872,87 @@
   .audio-trim-modal__ranges {
     grid-template-columns: 1fr;
   }
+}
+
+.universe-background-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+  max-width: 560px;
+  margin-left: auto;
+}
+
+.universe-background-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.universe-background-panel__head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.universe-background-list,
+.universe-background-options {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.universe-background-list li,
+.universe-background-option {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(125, 223, 255, .28);
+  border-radius: 14px;
+  background: rgba(6, 18, 42, .48);
+}
+
+.universe-background-list audio {
+  width: min(100%, 380px);
+}
+
+.universe-background-feedback {
+  text-align: right;
+}
+
+.universe-background-modal {
+  width: min(720px, 100%);
+}
+
+.universe-background-selector {
+  display: grid;
+  gap: 12px;
+}
+
+.universe-background-options {
+  max-height: min(420px, 55vh);
+  overflow: auto;
+}
+
+.universe-background-option {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  cursor: pointer;
+}
+
+.universe-background-option input {
+  margin-top: 4px;
+}
+
+.universe-background-option span,
+.universe-background-option small {
+  display: grid;
+  gap: 3px;
+}
+
+.universe-background-option small {
+  color: rgba(220, 237, 255, .72);
 }
