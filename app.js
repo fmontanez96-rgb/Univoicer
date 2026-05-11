@@ -434,6 +434,21 @@
         name: String(rawItem.name || '').trim(),
         storagePath: String(rawItem.storagePath || '').trim(),
         downloadURL: String(rawItem.downloadURL || '').trim(),
+        universeIds: [...new Set([
+          ...(Array.isArray(rawItem.universeIds) ? rawItem.universeIds : []),
+          rawItem.universeId,
+          rawItem.universoId
+        ].filter(Boolean).map(String))],
+        universeNames: [...new Set([
+          ...(Array.isArray(rawItem.universeNames) ? rawItem.universeNames : []),
+          ...(Array.isArray(rawItem.universes) ? rawItem.universes : []),
+          ...(Array.isArray(rawItem.universos) ? rawItem.universos : []),
+          ...(Array.isArray(rawItem.universo) ? rawItem.universo : []),
+          rawItem.universeName,
+          rawItem.universe,
+          Array.isArray(rawItem.universo) ? '' : rawItem.universo
+        ].filter(Boolean).map(String))],
+        universeName: String(rawItem.universeName || rawItem.universe || (Array.isArray(rawItem.universo) ? '' : rawItem.universo) || '').trim(),
         ...(Number.isFinite(parsedDurationMs) && parsedDurationMs >= 0 ? { durationMs: parsedDurationMs } : {}),
         createdAt,
         updatedAt
@@ -1484,6 +1499,21 @@
             url: String(item.url || ''),
             contentType: String(item.contentType || 'audio/mpeg'),
             size: Number(item.size) || 0,
+            universeIds: [...new Set([
+              ...(Array.isArray(item.universeIds) ? item.universeIds : []),
+              item.universeId,
+              item.universoId
+            ].filter(Boolean).map(String))],
+            universeNames: [...new Set([
+              ...(Array.isArray(item.universeNames) ? item.universeNames : []),
+              ...(Array.isArray(item.universes) ? item.universes : []),
+              ...(Array.isArray(item.universos) ? item.universos : []),
+              ...(Array.isArray(item.universo) ? item.universo : []),
+              item.universeName,
+              item.universe,
+              Array.isArray(item.universo) ? '' : item.universo
+            ].filter(Boolean).map(String))],
+            universeName: String(item.universeName || item.universe || (Array.isArray(item.universo) ? '' : item.universo) || '').trim(),
             createdAt: Number(item.createdAt) || Date.now()
           }));
       };
@@ -4894,6 +4924,114 @@
       return { characterName, videos, actors, universes, blockedActors, status };
     }
 
+    function getUniverseNameByAnyId(universeId) {
+      const cleanId = String(universeId || '').trim();
+      if (!cleanId) return '';
+      const modelUniverse = (collectionModel.universes || []).find((item) => String(item?.id || '').trim() === cleanId);
+      if (modelUniverse?.name) return String(modelUniverse.name || '').trim();
+      const nodeUniverse = (state.universeNodes || []).find((item) => String(item?.id || '').trim() === cleanId);
+      return nodeUniverse?.name ? String(nodeUniverse.name || '').trim() : '';
+    }
+
+    function getCharacterUniverseReferences(characterId, universeOverride = null) {
+      const characterName = getCharacterNameById(characterId) || String(characterId || '').trim();
+      const universeNames = Array.isArray(universeOverride)
+        ? universeOverride
+        : getCharacterProfileData(characterId).universes;
+      const nameSet = new Set();
+      const idSet = new Set();
+
+      normalizeUniverseList(universeNames, { fallbackToUnassigned: false }).forEach((universeName) => {
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      });
+
+      const modelCharacter = (collectionModel.characters || []).find((item) => (
+        getCharacterIdByName(item?.name || '') === characterId || normalizeName(item?.name || '') === normalizeName(characterName)
+      ));
+      (modelCharacter?.universeIds || []).forEach((universeId) => {
+        const cleanId = String(universeId || '').trim();
+        if (!cleanId) return;
+        idSet.add(normalizeEntityName(cleanId));
+        const universeName = getUniverseNameByAnyId(cleanId);
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      });
+
+      return { ids: idSet, names: nameSet };
+    }
+
+    function getBackgroundUniverseReferences(background) {
+      const idSet = new Set();
+      const nameSet = new Set();
+      const registerId = (rawId) => {
+        const cleanId = String(rawId || '').trim();
+        if (!cleanId) return;
+        idSet.add(normalizeEntityName(cleanId));
+        const universeName = getUniverseNameByAnyId(cleanId);
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      };
+      const registerName = (rawName) => {
+        const normalizedName = normalizeUniverseName(rawName);
+        if (normalizedName) nameSet.add(normalizedName);
+      };
+
+      [
+        ...(Array.isArray(background?.universeIds) ? background.universeIds : []),
+        ...(Array.isArray(background?.universoIds) ? background.universoIds : []),
+        background?.universeId,
+        background?.universoId
+      ].forEach(registerId);
+      [
+        ...(Array.isArray(background?.universeNames) ? background.universeNames : []),
+        ...(Array.isArray(background?.universes) ? background.universes : []),
+        ...(Array.isArray(background?.universos) ? background.universos : []),
+        ...(Array.isArray(background?.universo) ? background.universo : []),
+        background?.universeName,
+        background?.universe,
+        Array.isArray(background?.universo) ? '' : background?.universo
+      ].forEach(registerName);
+
+      return { ids: idSet, names: nameSet };
+    }
+
+    function getAvailableBackgroundsForCharacter(characterId, { universeOverride = null } = {}) {
+      const characterUniverses = getCharacterUniverseReferences(characterId, universeOverride);
+      if (!characterUniverses.ids.size && !characterUniverses.names.size) return [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      return fondos.filter((background) => {
+        const backgroundUniverses = getBackgroundUniverseReferences(background);
+        const sharesId = [...backgroundUniverses.ids].some((universeId) => characterUniverses.ids.has(universeId));
+        const sharesName = [...backgroundUniverses.names].some((universeName) => characterUniverses.names.has(universeName));
+        return sharesId || sharesName;
+      });
+    }
+
+    function getCharacterBackgroundId(characterName) {
+      const normalizedCharacter = normalizeName(characterName || '');
+      if (!normalizedCharacter) return '';
+      const backgroundIds = new Set((state.audioLibrary?.fondos || []).map((item) => String(item?.id || '').trim()).filter(Boolean));
+      const sourceVideo = VIDEOS.find((video) => normalizeName(video.personaje || '') === normalizedCharacter
+        && backgroundIds.has(String(video.backgroundId || video.background_id || '').trim()));
+      return sourceVideo ? String(sourceVideo.backgroundId || sourceVideo.background_id || '').trim() : '';
+    }
+
+    function setCharacterBackgroundId(characterName, backgroundId) {
+      const normalizedCharacter = normalizeName(characterName || '');
+      if (!normalizedCharacter) return false;
+      const cleanBackgroundId = String(backgroundId || '').trim();
+      let touched = false;
+      VIDEOS.forEach((video) => {
+        if (normalizeName(video.personaje || '') !== normalizedCharacter) return;
+        if (cleanBackgroundId) video.backgroundId = cleanBackgroundId;
+        else delete video.backgroundId;
+        delete video.background_id;
+        touched = true;
+      });
+      return touched;
+    }
+
     function renderCharacterProfile(characterId) {
       const { characterName, videos, actors, universes, blockedActors, status } = getCharacterProfileData(characterId);
       if (!characterName) {
@@ -4907,6 +5045,16 @@
         document.getElementById('backFromCharacterMissing')?.addEventListener('click', () => changeView('map'));
         return;
       }
+      const availableBackgrounds = getAvailableBackgroundsForCharacter(characterId);
+      const currentBackgroundId = getCharacterBackgroundId(characterName);
+      const selectedBackgroundId = availableBackgrounds.some((item) => String(item.id || '') === currentBackgroundId) ? currentBackgroundId : '';
+      const hasCharacterUniverses = universes.length > 0;
+      const backgroundSelectDisabled = !hasCharacterUniverses || !availableBackgrounds.length;
+      const backgroundHelpText = !hasCharacterUniverses
+        ? 'El selector está deshabilitado porque este personaje no tiene universos asociados.'
+        : !availableBackgrounds.length
+          ? 'No hay fondos asociados a los universos de este personaje.'
+          : 'Solo se listan fondos que comparten al menos un universo con este personaje.';
       viewCharacterProfile.innerHTML = `
         <section class="hud-panel holo-card profile-layout">
           <div class="actions">
@@ -4929,6 +5077,17 @@
             <div class="actions"><button id="addUniverseToCharacter" class="neon-btn">Agregar universo</button></div>
           </article>
           <article class="profile-section">
+            <h4>Edición</h4>
+            <label>Fondo asociado
+              <select id="characterProfileBackgroundSelect" ${backgroundSelectDisabled ? 'disabled' : ''}>
+                <option value="">${backgroundSelectDisabled ? 'Sin fondos disponibles' : 'Sin fondo asignado'}</option>
+                ${availableBackgrounds.map((background) => `<option value="${escapeHtml(background.id)}" ${String(background.id || '') === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>`).join('')}
+              </select>
+            </label>
+            <p class="muted">${escapeHtml(backgroundHelpText)}</p>
+            <div class="actions"><button id="saveCharacterBackground" class="neon-btn" ${backgroundSelectDisabled ? 'disabled' : ''}>Guardar fondo</button></div>
+          </article>
+          <article class="profile-section">
             <h4>Videos asociados (${videos.length})</h4>
             <ul class="detail-list detail-list-soft">
               ${videos.map(item => `<li>${item.titulo || 'Sin título'} · ${item.actor_de_doblaje || 'Sin actor'} · ${(getVideoUniverses(item).join(', ') || 'Sin universo')}</li>`).join('') || '<li>Sin videos asociados.</li>'}
@@ -4937,6 +5096,18 @@
         </section>
       `;
       document.getElementById('backFromCharacterProfile')?.addEventListener('click', () => changeView(state.universe ? 'universe' : 'map'));
+      document.getElementById('saveCharacterBackground')?.addEventListener('click', () => {
+        const nextBackgroundId = String(document.getElementById('characterProfileBackgroundSelect')?.value || '').trim();
+        const validBackgroundsForSelection = getAvailableBackgroundsForCharacter(characterId);
+        if (nextBackgroundId && !validBackgroundsForSelection.some((background) => String(background.id || '') === nextBackgroundId)) {
+          return setCharacterProfileFeedback('El fondo seleccionado no comparte universo con el personaje.', 'error');
+        }
+        setCharacterBackgroundId(characterName, nextBackgroundId);
+        saveVideos();
+        refreshDependentViews();
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback(nextBackgroundId ? 'Fondo actualizado correctamente.' : 'Fondo removido correctamente.');
+      });
       document.getElementById('addActorToCharacter')?.addEventListener('click', () => {
         const inputName = prompt(`Nombre del actor para ${characterName}:`, '');
         if (inputName === null) return;
@@ -5955,6 +6126,17 @@
         const currentCharacterRoleCategory = ROLE_CATEGORY_OPTIONS.find((categoryOption) => (
           normalizeRoleCategory(categoryOption) === normalizeRoleCategory(roleSourceVideo?.categoriaRol || roleSourceVideo?.categoria_rol || '')
         )) || 'A';
+        const focusedCharacterId = getCharacterIdByName(focusedCharacter);
+        const availableBackgrounds = getAvailableBackgroundsForCharacter(focusedCharacterId);
+        const currentBackgroundId = getCharacterBackgroundId(focusedCharacter);
+        const selectedBackgroundId = availableBackgrounds.some((item) => String(item.id || '') === currentBackgroundId) ? currentBackgroundId : '';
+        const hasCharacterUniverses = universos.length > 0;
+        const backgroundSelectDisabled = !hasCharacterUniverses || !availableBackgrounds.length;
+        const backgroundHelpText = !hasCharacterUniverses
+          ? 'El selector está deshabilitado porque este personaje no tiene universos asociados.'
+          : !availableBackgrounds.length
+            ? 'No hay fondos asociados a los universos de este personaje.'
+            : 'Solo se listan fondos que comparten al menos un universo con este personaje.';
 
         const isCharacterLocked = realVideos.length === 0;
         const customLockedAvatarUrl = getCharacterLockedAvatarUrl(focusedCharacter);
@@ -6048,6 +6230,13 @@
                 <label>Avatar bloqueado (URL opcional)
                   <input type="text" name="lockedAvatarUrl" value="${customLockedAvatarUrl}" placeholder="https://...">
                 </label>
+                <label>Fondo
+                  <select name="backgroundId" ${backgroundSelectDisabled ? 'disabled' : ''}>
+                    <option value="">${backgroundSelectDisabled ? 'Sin fondos disponibles' : 'Sin fondo asignado'}</option>
+                    ${availableBackgrounds.map((background) => `<option value="${escapeHtml(background.id)}" ${String(background.id || '') === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>`).join('')}
+                  </select>
+                  <span class="muted">${escapeHtml(backgroundHelpText)}</span>
+                </label>
                 <label>Rol
                   <select name="role" required>
                     ${['Protagonista', 'Villano', 'Secundario', 'Recurrente']
@@ -6132,12 +6321,22 @@
           const selectedActors = formData.getAll('characterActors').map((value) => String(value || '').trim()).filter(Boolean);
           const selectedUniverses = formData.getAll('characterUniverses').map((value) => String(value || '').trim()).filter(Boolean);
           const lockedAvatarUrl = String(formData.get('lockedAvatarUrl') || '').trim();
+          const selectedBackgroundId = String(formData.get('backgroundId') || '').trim();
           const nextRole = String(formData.get('role') || '').trim() || 'Recurrente';
           const nextRoleCategory = String(formData.get('roleCategory') || '').trim().toUpperCase() || 'A';
           if (!newName) return;
 
           const newActorsList = [...new Set(selectedActors)];
           const parsedUniverses = [...new Set(selectedUniverses)];
+          const validBackgroundsForSelection = getAvailableBackgroundsForCharacter(getCharacterIdByName(focusedCharacter), { universeOverride: parsedUniverses });
+          if (selectedBackgroundId && !validBackgroundsForSelection.some((background) => String(background.id || '') === selectedBackgroundId)) {
+            const feedback = document.getElementById('indiceCharacterFeedback');
+            if (feedback) {
+              feedback.textContent = 'El fondo seleccionado no comparte universo con el personaje.';
+              feedback.style.color = '#ffb6b6';
+            }
+            return;
+          }
           const {
             canonicalName: cleanName,
             canonicalRole: cleanRole,
@@ -6188,12 +6387,14 @@
                   rol: cleanRole,
                   categoriaRol: cleanRoleCategory,
                   thumbnail: createPlaceholderCover(cleanName),
-                  locked_avatar_url: lockedAvatarUrl
+                  locked_avatar_url: lockedAvatarUrl,
+                  ...(selectedBackgroundId ? { backgroundId: selectedBackgroundId } : {})
               });
               blockCharacterForActor(actor, cleanName);
           });
 
           setCharacterLockedAvatarUrl(cleanName, lockedAvatarUrl);
+          setCharacterBackgroundId(cleanName, selectedBackgroundId);
           state.showCharacterInlineEdit = false;
           state.indiceCharacterFocus = cleanName;
           saveBlockedCharacters();
