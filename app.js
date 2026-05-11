@@ -74,7 +74,8 @@
       showInteruniversalConnections: false,
       audioLibrary: {
         voces: [],
-        fondos: []
+        fondos: [],
+        mezclas: []
       },
       audioMixer: {
         voiceId: '',
@@ -89,7 +90,9 @@
       uploadStatusByCategory: {
         voces: { loading: false, error: '', success: '' },
         fondos: { loading: false, error: '', success: '' }
-      }
+      },
+      showUniverseBackgroundsPanel: false,
+      universeBackgroundFeedback: { type: '', text: '' }
     };
     const UNIVERSES_STORAGE_KEY = 'universes_map_v1';
     const VIDEOS_STORAGE_KEY = 'videos_collection_v1';
@@ -395,14 +398,33 @@
         universes: [],
         videos: [],
         worldMemberships: [],
-        audioLibrary: createEmptyAudioLibrary()
+        audioLibrary: createEmptyAudioLibrary(),
+        characterMedia: {}
       };
     }
 
     function createEmptyAudioLibrary() {
       return {
         voces: [],
-        fondos: []
+        fondos: [],
+        mezclas: []
+      };
+    }
+
+    function normalizeStringArray(value, { normalize = false } = {}) {
+      const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
+      return [...new Set(rawValues
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .map((item) => normalize ? normalizeEntityName(item) : item)
+        .filter(Boolean))];
+    }
+
+    function normalizeCharacterAudioFields(rawCharacter = {}) {
+      return {
+        imageUrls: normalizeStringArray(rawCharacter.imageUrls || rawCharacter.images || rawCharacter.imagenes),
+        selectedBackgroundId: String(rawCharacter.selectedBackgroundId || rawCharacter.backgroundId || '').trim(),
+        assignedMixAudioId: String(rawCharacter.assignedMixAudioId || rawCharacter.mixAudioId || rawCharacter.mezclaId || '').trim()
       };
     }
 
@@ -421,12 +443,16 @@
 
     function normalizeAudioLibraryItem(rawItem, fallbackCategory, index) {
       if (!rawItem || typeof rawItem !== 'object') return null;
-      const validCategory = rawItem.category === 'voces' || rawItem.category === 'fondos'
+      const validCategory = ['voces', 'fondos', 'mezclas'].includes(rawItem.category)
         ? rawItem.category
         : fallbackCategory;
       const createdAt = normalizeAudioTimestamp(rawItem.createdAt, new Date().toISOString());
       const updatedAt = normalizeAudioTimestamp(rawItem.updatedAt, createdAt);
       const parsedDurationMs = Number(rawItem.durationMs);
+
+      const universeIds = Array.isArray(rawItem.universeIds)
+        ? [...new Set(rawItem.universeIds.map((id) => String(id || '').trim()).filter(Boolean))]
+        : [];
 
       return {
         id: String(rawItem.id || `audio-${validCategory}-${Date.now()}-${index}`),
@@ -434,9 +460,30 @@
         name: String(rawItem.name || '').trim(),
         storagePath: String(rawItem.storagePath || '').trim(),
         downloadURL: String(rawItem.downloadURL || '').trim(),
+        universeIds: [...new Set([
+          ...(Array.isArray(rawItem.universeIds) ? rawItem.universeIds : []),
+          rawItem.universeId,
+          rawItem.universoId
+        ].filter(Boolean).map(String))],
+        universeNames: [...new Set([
+          ...(Array.isArray(rawItem.universeNames) ? rawItem.universeNames : []),
+          ...(Array.isArray(rawItem.universes) ? rawItem.universes : []),
+          ...(Array.isArray(rawItem.universos) ? rawItem.universos : []),
+          ...(Array.isArray(rawItem.universo) ? rawItem.universo : []),
+          rawItem.universeName,
+          rawItem.universe,
+          Array.isArray(rawItem.universo) ? '' : rawItem.universo
+        ].filter(Boolean).map(String))],
+        universeName: String(rawItem.universeName || rawItem.universe || (Array.isArray(rawItem.universo) ? '' : rawItem.universo) || '').trim(),
         ...(Number.isFinite(parsedDurationMs) && parsedDurationMs >= 0 ? { durationMs: parsedDurationMs } : {}),
         createdAt,
-        updatedAt
+        updatedAt,
+        ...(validCategory === 'voces' ? { characterId: String(rawItem.characterId || '').trim() } : {}),
+        ...(validCategory === 'fondos' ? {
+          universeIds: Array.isArray(rawItem.universeIds)
+            ? [...new Set(rawItem.universeIds.filter(Boolean).map(String))]
+            : []
+        } : {})
       };
     }
 
@@ -452,7 +499,8 @@
 
       return {
         voces: normalizeCategoryList(rawAudioLibrary.voces, 'voces'),
-        fondos: normalizeCategoryList(rawAudioLibrary.fondos, 'fondos')
+        fondos: normalizeCategoryList(rawAudioLibrary.fondos, 'fondos'),
+        mezclas: normalizeCategoryList(rawAudioLibrary.mezclas, 'mezclas')
       };
     }
 
@@ -486,7 +534,8 @@
           actorIds: Array.isArray(item.actorIds) ? [...new Set(item.actorIds.filter(Boolean).map(String))] : [],
           universeIds: Array.isArray(item.universeIds) ? [...new Set(item.universeIds.filter(Boolean).map(String))] : [],
           videoIds: Array.isArray(item.videoIds) ? [...new Set(item.videoIds.filter(Boolean).map(String))] : [],
-          unlocked: Boolean(item.unlocked)
+          unlocked: Boolean(item.unlocked),
+          ...normalizeCharacterAudioFields(item)
         })),
         universes: rawModel.universes.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -514,12 +563,16 @@
             .filter(item => item.worldUniverseId && item.parentUniverseId)
             .filter(item => rawUniverseIds.has(item.worldUniverseId) && rawUniverseIds.has(item.parentUniverseId))
           : [],
-        audioLibrary: normalizeAudioLibrary(rawModel.audioLibrary)
+        audioLibrary: normalizeAudioLibrary({
+          ...(rawModel.audioLibrary && typeof rawModel.audioLibrary === 'object' ? rawModel.audioLibrary : {}),
+          ...(rawModel.mezclas && typeof rawModel.mezclas === 'object' ? { mezclas: rawModel.mezclas } : {})
+        })
       };
     }
 
     function saveCollectionModel() {
       ensureCollectionModelAudioLibrary(collectionModel);
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
       localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       scheduleCloudSync();
     }
@@ -547,7 +600,7 @@
     function getOrCreateCharacter(model, characterName, characterMap) {
       const normalized = normalizeEntityName(characterName || 'Sin personaje');
       if (characterMap.has(normalized)) return characterMap.get(normalized);
-      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false };
+      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false, imageUrls: [], selectedBackgroundId: '', assignedMixAudioId: '' };
       model.characters.push(character);
       characterMap.set(normalized, character);
       return character;
@@ -658,7 +711,8 @@
             }))
             .filter((item) => item.worldUniverseId && item.parentUniverseId)
           : [],
-        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary)
+        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary),
+        characterMedia: normalizeCharacterMediaMap(baseModel.characterMedia)
       };
 
       const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
@@ -1242,6 +1296,16 @@
     function syncCollectionModelWithVideos(preserveActorsFromModel = collectionModel) {
       const nextModel = migrateLegacyVideosToModel(VIDEOS);
       nextModel.audioLibrary = normalizeAudioLibrary(preserveActorsFromModel?.audioLibrary);
+      const characterNameToPreservedFields = new Map(
+        (preserveActorsFromModel?.characters || []).map((character) => [
+          normalizeEntityName(character?.name),
+          normalizeCharacterAudioFields(character)
+        ])
+      );
+      (nextModel.characters || []).forEach((character) => {
+        const preservedFields = characterNameToPreservedFields.get(normalizeEntityName(character?.name));
+        if (preservedFields) Object.assign(character, preservedFields);
+      });
       const actorNameToActor = new Map(
         (nextModel.actors || []).map((actor) => [normalizeEntityName(actor.name), actor])
       );
@@ -1418,6 +1482,9 @@
         videos: normalizedVideos,
         universeNodes: state.universeNodes || [],
         universeMemberships: state.universeMemberships || {},
+        audioLibrary: normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary),
+        mezclas: normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary).mezclas,
+        collectionModel: parseModelFromStorage(collectionModel) || collectionModel,
         blockedCharactersByActor: state.blockedCharactersByActor || {}
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1451,11 +1518,24 @@
           if (parsed.universeMemberships && typeof parsed.universeMemberships === 'object') {
             state.universeMemberships = normalizeUniverseMemberships(parsed.universeMemberships);
           }
+          if (parsed.audioLibrary && typeof parsed.audioLibrary === 'object') {
+            state.audioLibrary = normalizeAudioLibrary({
+              ...parsed.audioLibrary,
+              ...(parsed.mezclas && typeof parsed.mezclas === 'object' ? { mezclas: parsed.mezclas } : {})
+            });
+          } else if (parsed.mezclas && typeof parsed.mezclas === 'object') {
+            state.audioLibrary = normalizeAudioLibrary({ ...state.audioLibrary, mezclas: parsed.mezclas });
+          }
+          if (parsed.collectionModel && typeof parsed.collectionModel === 'object') {
+            collectionModel = parseModelFromStorage(parsed.collectionModel) || collectionModel;
+          }
           if (parsed.blockedCharactersByActor && typeof parsed.blockedCharactersByActor === 'object') {
             state.blockedCharactersByActor = parsed.blockedCharactersByActor;
           }
         }
+        collectionModel.audioLibrary = normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary);
         saveVideos();
+        saveAudioLibrary();
         saveUniverseNodes();
         saveUniverseMemberships();
         saveBlockedCharacters();
@@ -1470,47 +1550,257 @@
 
 
     function normalizeAudioLibrary(rawAudioLibrary) {
-      const base = { voces: [], fondos: [] };
+      const base = createEmptyAudioLibrary();
       if (!rawAudioLibrary || typeof rawAudioLibrary !== 'object') return base;
 
-      const normalizeCategory = (value) => {
-        if (!Array.isArray(value)) return [];
-        return value
+      const now = Date.now();
+      const normalizeDateMs = (value, fallback = now) => {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+        const parsed = Date.parse(String(value || ''));
+        return Number.isNaN(parsed) ? fallback : parsed;
+      };
+      const normalizeCommonAudio = (item, fallbackCategory, index) => {
+        const path = String(item.path || item.storagePath || '').trim();
+        const url = String(item.url || item.downloadURL || '').trim();
+        const createdAt = normalizeDateMs(item.createdAt, now);
+        const normalized = {
+          id: String(item.id || `audio-${fallbackCategory}-${now}-${index}-${Math.random().toString(16).slice(2)}`),
+          category: fallbackCategory,
+          name: String(item.name || item.nombre || 'Archivo sin nombre').trim() || 'Archivo sin nombre',
+          path,
+          url,
+          storagePath: String(item.storagePath || path).trim(),
+          downloadURL: String(item.downloadURL || url).trim(),
+          contentType: String(item.contentType || item.mimeType || 'audio/mpeg'),
+          size: Number(item.size) || 0,
+          createdAt
+        };
+        const updatedAt = normalizeDateMs(item.updatedAt, 0);
+        if (updatedAt) normalized.updatedAt = updatedAt;
+        const durationMs = Number(item.durationMs || item.duration);
+        if (Number.isFinite(durationMs) && durationMs >= 0) normalized.durationMs = durationMs;
+        return normalized;
+      };
+      const normalizeVoice = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'voces', index);
+        const characterId = String(item.characterId || item.assignedCharacterId || '').trim();
+        const characterName = String(item.characterName || item.personaje || '').trim();
+        if (characterId) normalized.characterId = characterId;
+        else if (characterName) normalized.characterName = characterName;
+        return normalized;
+      };
+      const normalizeBackground = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'fondos', index);
+        const universeIds = normalizeStringArray(item.universeIds || item.universesIds || item.universeId);
+        const universeNames = normalizeStringArray(item.universeNames || item.universes || item.universeName || item.universo, { normalize: true });
+        if (universeIds.length) normalized.universeIds = universeIds;
+        if (universeNames.length) normalized.universeNames = universeNames;
+        return normalized;
+      };
+      const normalizeMix = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'mezclas', index);
+        const mixParameters = {
+          ...(item.mixParameters && typeof item.mixParameters === 'object' ? item.mixParameters : {}),
+          ...(item.params && typeof item.params === 'object' ? item.params : {}),
+          ...(item.parameters && typeof item.parameters === 'object' ? item.parameters : {})
+        };
+        ['voiceVolume', 'backgroundVolume', 'backgroundStartOffsetSec', 'padMode'].forEach((key) => {
+          if (item[key] !== undefined && mixParameters[key] === undefined) mixParameters[key] = item[key];
+        });
+        return {
+          ...normalized,
+          voiceId: String(item.voiceId || item.vozId || '').trim(),
+          backgroundId: String(item.backgroundId || item.fondoId || '').trim(),
+          mixParameters,
+          assignedCharacterId: String(item.assignedCharacterId || item.characterId || '').trim()
+        };
+      };
+      const normalizeList = (value, mapper) => {
+        const looksLikeSingleAudioItem = value && typeof value === 'object'
+          && ['id', 'url', 'path', 'storagePath', 'downloadURL', 'voiceId', 'backgroundId'].some((key) => value[key] !== undefined);
+        const rows = Array.isArray(value)
+          ? value
+          : (looksLikeSingleAudioItem ? [value] : (value && typeof value === 'object' ? Object.entries(value).map(([id, item]) => ({ id, ...(item || {}) })) : []));
+        return rows
           .filter(item => item && typeof item === 'object')
-          .map((item) => ({
-            id: String(item.id || `audio-${Date.now()}-${Math.random().toString(16).slice(2)}`),
-            name: String(item.name || 'Archivo sin nombre'),
-            path: String(item.path || ''),
-            url: String(item.url || ''),
-            contentType: String(item.contentType || 'audio/mpeg'),
-            size: Number(item.size) || 0,
-            createdAt: Number(item.createdAt) || Date.now()
-          }));
+          .map(mapper);
       };
 
       return {
-        voces: normalizeCategory(rawAudioLibrary.voces),
-        fondos: normalizeCategory(rawAudioLibrary.fondos)
+        voces: normalizeList(rawAudioLibrary.voces || rawAudioLibrary.voices, normalizeVoice),
+        fondos: normalizeList(rawAudioLibrary.fondos || rawAudioLibrary.backgrounds, normalizeBackground),
+        mezclas: normalizeList(rawAudioLibrary.mezclas || rawAudioLibrary.mixes || rawAudioLibrary.mix, normalizeMix)
       };
+    }
+
+    function normalizeCharacterMediaEntry(rawEntry) {
+      const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+      return {
+        imageUrls: Array.isArray(entry.imageUrls)
+          ? [...new Set(entry.imageUrls.map((url) => String(url || '').trim()).filter(Boolean))]
+          : [],
+        backgroundId: String(entry.backgroundId || ''),
+        mixUrl: String(entry.mixUrl || '')
+      };
+    }
+
+    function normalizeCharacterMediaMap(rawMap) {
+      if (!rawMap || typeof rawMap !== 'object') return {};
+      return Object.fromEntries(
+        Object.entries(rawMap)
+          .map(([characterId, entry]) => [String(characterId || '').trim(), normalizeCharacterMediaEntry(entry)])
+          .filter(([characterId]) => Boolean(characterId))
+      );
+    }
+
+    function ensureCollectionModelCharacterMedia(model = collectionModel) {
+      if (!model || typeof model !== 'object') return {};
+      model.characterMedia = normalizeCharacterMediaMap(model.characterMedia);
+      return model.characterMedia;
     }
 
     function loadAudioLibraryFromStorage() {
       try {
         const raw = localStorage.getItem(AUDIO_LIBRARY_STORAGE_KEY);
-        if (!raw) return normalizeAudioLibrary(null);
-        return normalizeAudioLibrary(JSON.parse(raw));
+        if (raw) return normalizeAudioLibrary(JSON.parse(raw));
       } catch (_) {
-        return normalizeAudioLibrary(null);
+        return normalizeAudioLibrary(collectionModel?.audioLibrary);
       }
+      return normalizeAudioLibrary(collectionModel?.audioLibrary);
     }
 
     function saveAudioLibrary() {
       const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
       state.audioLibrary = normalizedAudioLibrary;
       collectionModel.audioLibrary = normalizedAudioLibrary;
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
       localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
       scheduleCloudSync();
+    }
+
+
+    function getUniverseAudioAssociationId(universeName = state.universe) {
+      const normalizedUniverseName = normalizeUniverseName(universeName || '');
+      const node = state.universeNodes.find((item) => normalizeUniverseName(item.name || '') === normalizedUniverseName);
+      return String(node?.id || normalizedUniverseName || universeName || '').trim();
+    }
+
+    function getUniverseAssociatedBackgrounds(universeName = state.universe) {
+      const associationId = getUniverseAudioAssociationId(universeName);
+      if (!associationId) return [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      return fondos.filter((background) => (
+        Array.isArray(background.universeIds)
+        && background.universeIds.some((id) => String(id || '') === associationId)
+      ));
+    }
+
+    function setUniverseBackgroundFeedback(type, text) {
+      state.universeBackgroundFeedback = {
+        type: type === 'success' ? 'success' : type === 'error' ? 'error' : '',
+        text: String(text || '')
+      };
+      if (state.view === 'universe') renderUniverseView();
+    }
+
+    function saveUniverseBackgroundAssociations(selectedBackgroundIds) {
+      const associationId = getUniverseAudioAssociationId();
+      if (!associationId) throw new Error('No se pudo identificar el universo actual.');
+      const selectedIds = new Set((Array.isArray(selectedBackgroundIds) ? selectedBackgroundIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean));
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      state.audioLibrary.fondos = fondos.map((background) => {
+        const currentUniverseIds = Array.isArray(background.universeIds)
+          ? background.universeIds.map((id) => String(id || '').trim()).filter(Boolean)
+          : [];
+        const nextUniverseIds = new Set(currentUniverseIds.filter((id) => id !== associationId));
+        if (selectedIds.has(String(background.id || ''))) nextUniverseIds.add(associationId);
+        return {
+          ...background,
+          universeIds: [...nextUniverseIds],
+          updatedAt: Date.now()
+        };
+      });
+      saveAudioLibrary();
+      state.showUniverseBackgroundsPanel = true;
+      state.universeBackgroundFeedback = {
+        type: 'success',
+        text: selectedIds.size
+          ? `${selectedIds.size} fondo${selectedIds.size === 1 ? '' : 's'} asociado${selectedIds.size === 1 ? '' : 's'} al universo.`
+          : 'Se quitaron los fondos asociados a este universo.'
+      };
+    }
+
+    function openUniverseBackgroundSelectorModal() {
+      const associationId = getUniverseAudioAssociationId();
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      if (!associationId) {
+        setUniverseBackgroundFeedback('error', 'No se pudo identificar el universo actual.');
+        return;
+      }
+      if (!fondos.length) {
+        setUniverseBackgroundFeedback('error', 'No hay fondos cargados en la biblioteca de audio.');
+        return;
+      }
+      const selectedIds = new Set(getUniverseAssociatedBackgrounds().map((background) => String(background.id || '')));
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.innerHTML = `
+        <article class="detail-content universe-background-modal">
+          <button type="button" class="detail-close neon-btn" id="closeUniverseBackgroundSelector">✕ Cerrar</button>
+          <h3 class="section-title">Designar fondos para ${escapeHtml(state.universe || 'este universo')}</h3>
+          <p class="muted">Selecciona uno o varios fondos. La asociación se guarda en <code>background.universeIds</code>.</p>
+          <form id="universeBackgroundSelectorForm" class="universe-background-selector">
+            <div class="universe-background-options">
+              ${fondos.map((background) => {
+                const id = String(background.id || '');
+                return `
+                  <label class="universe-background-option">
+                    <input type="checkbox" name="backgroundIds" value="${escapeHtml(id)}" ${selectedIds.has(id) ? 'checked' : ''}>
+                    <span>
+                      <strong>${escapeHtml(background.name || 'Fondo sin nombre')}</strong>
+                      <small>${escapeHtml(background.contentType || 'audio')} · ${Math.max(0, Math.round((Number(background.size) || 0) / 1024))} KB</small>
+                    </span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+            <p class="audio-library-feedback" aria-live="polite" data-universe-background-modal-feedback></p>
+            <div class="actions">
+              <button type="submit" class="neon-btn neon-btn--primary">Guardar asociación</button>
+              <button type="button" class="neon-btn" id="cancelUniverseBackgroundSelector">Cancelar</button>
+            </div>
+          </form>
+        </article>
+      `;
+      const closeModal = () => modal.remove();
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      document.body.appendChild(modal);
+      modal.querySelector('#closeUniverseBackgroundSelector')?.addEventListener('click', closeModal);
+      modal.querySelector('#cancelUniverseBackgroundSelector')?.addEventListener('click', closeModal);
+      modal.querySelector('#universeBackgroundSelectorForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const feedbackEl = modal.querySelector('[data-universe-background-modal-feedback]');
+        try {
+          const formData = new FormData(event.currentTarget);
+          saveUniverseBackgroundAssociations(formData.getAll('backgroundIds'));
+          closeModal();
+          renderUniverseView();
+        } catch (err) {
+          if (feedbackEl) {
+            feedbackEl.textContent = err.message || 'No se pudieron guardar las asociaciones.';
+            feedbackEl.classList.add('is-error');
+          }
+        }
+      });
     }
 
     function setAudioUploadStatus(category, patch) {
@@ -1620,29 +1910,68 @@
     }
 
     async function handleAudioLibraryFileSelected(event, category, preferredName = '') {
-      const file = event.target?.files?.[0];
-      event.target.value = '';
-      if (!file) return;
+      const files = Array.from(event.target?.files || []);
+      if (event.target) event.target.value = '';
+      if (!files.length) return;
 
-      setAudioUploadStatus(category, { loading: true, error: '', success: '' });
-      try {
-        const metadata = await uploadAudioFileForCategory(file, category, preferredName);
+      const total = files.length;
+      const uploadedMetadata = [];
+      const uploadErrors = [];
+      const getUploadSummary = () => {
+        const errorSummary = uploadErrors.length ? ` · ${uploadErrors.length} con error` : '';
+        return `Total: ${total} · Subidos: ${uploadedMetadata.length}${errorSummary}`;
+      };
+      const getUploadErrorStatus = () => (
+        uploadErrors.length ? `${getUploadSummary()} · Errores: ${uploadErrors.join(' | ')}` : ''
+      );
+
+      setAudioUploadStatus(category, {
+        loading: true,
+        error: '',
+        success: `Preparando ${total} archivo${total === 1 ? '' : 's'} para subir...`
+      });
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const fileName = file?.name || `archivo ${index + 1}`;
+        setAudioUploadStatus(category, {
+          loading: true,
+          error: getUploadErrorStatus(),
+          success: `${getUploadSummary()} · Subiendo ${index + 1} de ${total}: "${fileName}"...`
+        });
+
+        try {
+          const displayName = total === 1 ? preferredName : '';
+          const metadata = await uploadAudioFileForCategory(file, category, displayName);
+          uploadedMetadata.push(metadata);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · "${metadata.name}" subido correctamente.`
+          });
+        } catch (err) {
+          uploadErrors.push(`"${fileName}": ${normalizeAudioUploadError(err)}`);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · Continuando con los archivos restantes...`
+          });
+        }
+      }
+
+      if (uploadedMetadata.length) {
         const current = Array.isArray(state.audioLibrary[category]) ? state.audioLibrary[category] : [];
-        state.audioLibrary[category] = [metadata, ...current]
+        state.audioLibrary[category] = [...uploadedMetadata, ...current]
           .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
         saveAudioLibrary();
-        setAudioUploadStatus(category, {
-          loading: false,
-          success: `Archivo "${metadata.name}" subido correctamente.`,
-          error: ''
-        });
-      } catch (err) {
-        setAudioUploadStatus(category, {
-          loading: false,
-          error: normalizeAudioUploadError(err),
-          success: ''
-        });
       }
+
+      const finalSummary = `Total: ${total} · Subidos correctamente: ${uploadedMetadata.length} · Errores: ${uploadErrors.length}`;
+      setAudioUploadStatus(category, {
+        loading: false,
+        error: uploadErrors.length ? `${finalSummary} · ${uploadErrors.join(' | ')}` : '',
+        success: uploadErrors.length ? '' : finalSummary
+      });
     }
 
     function hydrateModelWithFallback() {
@@ -1900,6 +2229,153 @@
       return audioContext.decodeAudioData(fileBytes.slice(0));
     }
 
+
+
+    function getAudioItemUrl(item) {
+      return String(item?.url || item?.downloadURL || '').trim();
+    }
+
+    function getAudioLibraryMixById(mixAudioId) {
+      const id = String(mixAudioId || '').trim();
+      if (!id) return null;
+      return (Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [])
+        .find((item) => item.id === id) || null;
+    }
+
+    function getCharacterById(characterId) {
+      const id = String(characterId || '').trim();
+      if (!id) return null;
+      return (collectionModel.characters || []).find((character) => character.id === id) || null;
+    }
+
+    function getAssignedMixForCharacterId(characterId) {
+      const character = getCharacterById(characterId);
+      return getAudioLibraryMixById(character?.assignedMixAudioId || '');
+    }
+
+    async function downloadUrlAsFile(url, fileName) {
+      const cleanUrl = String(url || '').trim();
+      if (!cleanUrl) throw new Error('No hay URL descargable para este audio.');
+      try {
+        const response = await fetch(cleanUrl);
+        if (!response.ok) throw new Error('No se pudo descargar el archivo.');
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = fileName || 'univoicer-audio.wav';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      } catch (err) {
+        const anchor = document.createElement('a');
+        anchor.href = cleanUrl;
+        anchor.download = fileName || 'univoicer-audio.wav';
+        anchor.target = '_blank';
+        anchor.rel = 'noopener';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+    }
+
+    async function downloadCharacterMultimedia(characterId) {
+      const character = getCharacterById(characterId);
+      if (!character) throw new Error('No encontramos el personaje seleccionado.');
+      const assignedMix = getAssignedMixForCharacterId(character.id);
+      if (assignedMix) {
+        const url = getAudioItemUrl(assignedMix);
+        if (!url) throw new Error('La mezcla asignada no tiene URL descargable.');
+        await downloadUrlAsFile(url, `${cssSafe(character.name || 'personaje')}-mezcla.wav`);
+        return `Descargando mezcla asignada: ${assignedMix.name || 'Mezcla'}.`;
+      }
+      throw new Error('Este personaje todavía no tiene una mezcla asignada para descargar.');
+    }
+
+    async function uploadMixedAudioBlob(blob, { voiceItem, backgroundItem } = {}) {
+      if (!firebaseStorage) throw new Error('Firebase Storage no está disponible en esta sesión.');
+      const uniqueId = `mix-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const name = `Mezcla ${voiceItem?.name || 'voz'} + ${backgroundItem?.name || 'fondo'}`;
+      const path = `audioLibrary/mezclas/${uniqueId}.wav`;
+      const ref = firebaseStorage.ref(path);
+      const uploadTask = ref.put(blob, {
+        contentType: 'audio/wav',
+        customMetadata: {
+          category: 'mezclas',
+          voiceAudioId: String(voiceItem?.id || ''),
+          backgroundAudioId: String(backgroundItem?.id || '')
+        }
+      });
+      const snapshot = await uploadWithTimeout(uploadTask, 30000);
+      const url = await snapshot.ref.getDownloadURL();
+      const metadata = {
+        id: uniqueId,
+        category: 'mezclas',
+        name,
+        path,
+        storagePath: path,
+        url,
+        downloadURL: url,
+        contentType: 'audio/wav',
+        size: Number(blob.size) || 0,
+        voiceAudioId: String(voiceItem?.id || ''),
+        backgroundAudioId: String(backgroundItem?.id || ''),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      const current = Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [];
+      state.audioLibrary.mezclas = [metadata, ...current]
+        .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+      saveAudioLibrary();
+      return metadata;
+    }
+
+    function openAssignMixToCharacterModal(mixMetadata, { onAssigned } = {}) {
+      const characters = [...(collectionModel.characters || [])]
+        .filter((character) => character?.id && character?.name)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'es', { sensitivity: 'base' }));
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content">
+          <h3 class="section-title">Asignar mezcla a personaje</h3>
+          <p class="muted">Selecciona el personaje que usará <strong>${escapeHtml(mixMetadata?.name || 'la mezcla')}</strong> como multimedia descargable.</p>
+          <label>Personaje
+            <select class="control-input" data-mix-character-select>
+              <option value="">Selecciona un personaje</option>
+              ${characters.map((character) => `<option value="${escapeHtml(character.id)}">${escapeHtml(character.name)}</option>`).join('')}
+            </select>
+          </label>
+          <p class="audio-library-feedback" aria-live="polite" data-mix-character-feedback></p>
+          <div class="actions">
+            <button type="button" class="neon-btn neon-btn--primary" data-confirm-mix-character>Confirmar</button>
+            <button type="button" class="neon-btn" data-cancel-mix-character>Cancelar</button>
+          </div>
+        </article>
+      `;
+      document.body.appendChild(modal);
+      const close = () => modal.remove();
+      modal.querySelector('[data-cancel-mix-character]')?.addEventListener('click', close);
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) close();
+      });
+      modal.querySelector('[data-confirm-mix-character]')?.addEventListener('click', () => {
+        const select = modal.querySelector('[data-mix-character-select]');
+        const feedback = modal.querySelector('[data-mix-character-feedback]');
+        const characterId = String(select?.value || '').trim();
+        const character = getCharacterById(characterId);
+        if (!character) {
+          if (feedback) feedback.textContent = 'Debes seleccionar un personaje.';
+          return;
+        }
+        character.assignedMixAudioId = String(mixMetadata?.id || '');
+        saveCollectionModel();
+        if (typeof onAssigned === 'function') onAssigned(character, mixMetadata);
+        close();
+      });
+    }
+
     function drawAudioMixerBackgroundMarker(canvas, markerSeconds, maxDuration) {
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -1923,7 +2399,8 @@
       backgroundBuffer,
       voiceVolume = 1,
       backgroundVolume = 0.6,
-      backgroundOffset = 0
+      backgroundOffset = 0,
+      backgroundPadMode = 'none'
     }) {
       const safeVoiceDuration = Math.max(0.01, Number(voiceBuffer?.duration) || 0.01);
       const sampleRate = voiceBuffer?.sampleRate || backgroundBuffer?.sampleRate || 44100;
@@ -1953,8 +2430,12 @@
         const safeOffset = Math.max(0, Number(backgroundOffset) || 0);
         const availableDuration = Math.max(0, backgroundBuffer.duration - safeOffset);
         const bgDuration = Math.min(safeVoiceDuration, availableDuration);
+        const normalizedPadMode = String(backgroundPadMode || 'none').toLowerCase();
+        const bgStartAt = normalizedPadMode === 'padstart' && bgDuration < safeVoiceDuration
+          ? safeVoiceDuration - bgDuration
+          : 0;
         if (bgDuration > 0) {
-          bgSource.start(0, safeOffset, bgDuration);
+          bgSource.start(bgStartAt, safeOffset, bgDuration);
         }
       }
 
@@ -2424,12 +2905,19 @@
           const parsedModel = parseModelFromStorage(data.collectionModel);
           if (parsedModel) {
             collectionModel = parsedModel;
-            ensureCollectionModelAudioLibrary(collectionModel);
+            state.audioLibrary = normalizeAudioLibrary(collectionModel.audioLibrary);
+            localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
             localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
           }
         }
         if (data.audioLibrary && typeof data.audioLibrary === 'object') {
-          collectionModel.audioLibrary = normalizeAudioLibrary(data.audioLibrary);
+          collectionModel.audioLibrary = normalizeAudioLibrary({
+            ...data.audioLibrary,
+            ...(data.mezclas && typeof data.mezclas === 'object' ? { mezclas: data.mezclas } : {})
+          });
+          localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
+        } else if (data.mezclas && typeof data.mezclas === 'object') {
+          collectionModel.audioLibrary = normalizeAudioLibrary({ ...collectionModel.audioLibrary, mezclas: data.mezclas });
           localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
         }
         if (data.blockedCharactersByActor && typeof data.blockedCharactersByActor === 'object') {
@@ -2437,12 +2925,19 @@
           localStorage.setItem(BLOCKED_CHARACTERS_STORAGE_KEY, JSON.stringify(state.blockedCharactersByActor));
         }
         if (data.audioLibrary && typeof data.audioLibrary === 'object') {
-          state.audioLibrary = normalizeAudioLibrary(data.audioLibrary);
+          state.audioLibrary = normalizeAudioLibrary({
+            ...data.audioLibrary,
+            ...(data.mezclas && typeof data.mezclas === 'object' ? { mezclas: data.mezclas } : {})
+          });
+          localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
+        } else if (data.mezclas && typeof data.mezclas === 'object') {
+          state.audioLibrary = normalizeAudioLibrary({ ...state.audioLibrary, mezclas: data.mezclas });
           localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
         }
         if (!collectionModel.videos.length && VIDEOS.length) {
           collectionModel = migrateLegacyVideosToModel(VIDEOS);
           ensureCollectionModelAudioLibrary(collectionModel);
+          ensureCollectionModelCharacterMedia(collectionModel);
           localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
         }
         buildAutoMarathonPlaylist();
@@ -2504,6 +2999,8 @@
       const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
       state.audioLibrary = normalizedAudioLibrary;
       collectionModel.audioLibrary = normalizedAudioLibrary;
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
       try {
         await firebaseDb.ref(CLOUD_STORAGE_PATH).set({
           updatedAt,
@@ -2512,6 +3009,7 @@
           videos: VIDEOS,
           collectionModel,
           audioLibrary: collectionModel.audioLibrary,
+          mezclas: collectionModel.audioLibrary.mezclas,
           blockedCharactersByActor: state.blockedCharactersByActor,
           favoriteUniverses: [...new Set(
             (state.universeNodes || [])
@@ -4002,6 +4500,11 @@
       const progressVisual = getProgressVisual(universeData.completion);
       const editFeedbackText = state.editUniverseFeedback?.text || '';
       const editFeedbackClass = state.editUniverseFeedback?.type === 'success' ? 'is-success' : '';
+      const associatedBackgrounds = getUniverseAssociatedBackgrounds();
+      const universeBackgroundFeedbackText = state.universeBackgroundFeedback?.text || '';
+      const universeBackgroundFeedbackClass = state.universeBackgroundFeedback?.type === 'success'
+        ? 'is-success'
+        : state.universeBackgroundFeedback?.type === 'error' ? 'is-error' : '';
       viewUniverse.innerHTML = `
         <div class="actions universe-view-animated">
           <button id="backMap" class="neon-btn">← Volver al mapa</button>
@@ -4028,6 +4531,16 @@
               ${universeNode?.isFavorite ? '⭐' : '☆'}
             </button>
 
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+              <button
+                id="toggleUniverseBackgrounds"
+                class="neon-btn neon-action icon-only"
+                aria-expanded="${state.showUniverseBackgroundsPanel ? 'true' : 'false'}"
+                title="Fondos del universo"
+              >🎵</button>
+              <button id="openUniverseBackgroundSelector" class="neon-btn neon-action" title="Designar fondos del universo">Designar fondo</button>
+            </div>
+
             <div style="display: flex; gap: 10px;">
               <button
                 id="toggleEditUniverseForm"
@@ -4049,6 +4562,27 @@
               </button>
             </div>
           </div>
+          ${state.showUniverseBackgroundsPanel ? `
+            <section class="hud-panel universe-background-panel">
+              <div class="universe-background-panel__head">
+                <h3>Fondos asociados</h3>
+                <button type="button" id="openUniverseBackgroundSelectorFromPanel" class="neon-btn neon-action">Designar fondo</button>
+              </div>
+              ${associatedBackgrounds.length ? `
+                <ul class="universe-background-list">
+                  ${associatedBackgrounds.map((background) => `
+                    <li>
+                      <span>${escapeHtml(background.name || 'Fondo sin nombre')}</span>
+                      ${background.url ? `<audio controls preload="none" src="${escapeHtml(background.url)}" aria-label="Reproducir ${escapeHtml(background.name || 'fondo')}"></audio>` : '<small class="muted">Sin URL de reproducción</small>'}
+                    </li>
+                  `).join('')}
+                </ul>
+              ` : '<p class="muted">Este universo todavía no tiene fondos asociados.</p>'}
+              <p class="audio-library-feedback ${universeBackgroundFeedbackClass}" aria-live="polite">${escapeHtml(universeBackgroundFeedbackText)}</p>
+            </section>
+          ` : universeBackgroundFeedbackText ? `
+            <p class="audio-library-feedback universe-background-feedback ${universeBackgroundFeedbackClass}" aria-live="polite">${escapeHtml(universeBackgroundFeedbackText)}</p>
+          ` : ''}
           ${state.showEditUniverseForm ? `
             <section class="hud-panel universe-edit-panel">
               <form id="editUniverseForm" class="universe-edit-form">
@@ -4191,6 +4725,12 @@
       const btnToggleVideo = document.getElementById('btn-toggle-video');
       const btnAddBlockedCharacter = document.getElementById('btn-add-blocked-character');
       const formAgregarVideo = document.getElementById('form-agregar-video');
+      document.getElementById('toggleUniverseBackgrounds')?.addEventListener('click', () => {
+        state.showUniverseBackgroundsPanel = !state.showUniverseBackgroundsPanel;
+        renderUniverseView();
+      });
+      document.getElementById('openUniverseBackgroundSelector')?.addEventListener('click', openUniverseBackgroundSelectorModal);
+      document.getElementById('openUniverseBackgroundSelectorFromPanel')?.addEventListener('click', openUniverseBackgroundSelectorModal);
       const videoCharacterInput = formAgregarVideo?.querySelector('[name="personaje_label"]');
       const videoActorCatalog = formAgregarVideo?.querySelector('#videoActorCatalog');
       btnToggleVideo?.addEventListener('click', () => {
@@ -4880,251 +5420,65 @@
       feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
     }
 
-    function setIndiceCharacterFeedback(message, type = 'success') {
-      const feedback = document.getElementById('indiceCharacterFeedback');
-      if (!feedback) return;
-      feedback.textContent = message || '';
-      feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
+    function getCharacterModelRecordByProfileId(characterId) {
+      const profileId = String(characterId || '').trim();
+      if (!profileId) return null;
+      return (collectionModel.characters || []).find((character) => (
+        String(character.id || '') === profileId || getCharacterIdByName(character.name) === profileId
+      )) || null;
     }
 
-    function getAudioLibraryItemUrl(item) {
-      return String(
-        item?.url
-        || item?.downloadURL
-        || item?.downloadUrl
-        || item?.href
-        || item?.src
-        || item?.fileUrl
-        || item?.audioUrl
-        || ''
-      ).trim();
+    function getCharacterMedia(characterId) {
+      const profileId = String(characterId || '').trim();
+      const modelCharacter = getCharacterModelRecordByProfileId(profileId);
+      const modelId = String(modelCharacter?.id || '').trim();
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const media = normalizeCharacterMediaEntry(mediaMap[profileId] || mediaMap[modelId]);
+      mediaMap[profileId] = media;
+      if (modelId && modelId !== profileId) delete mediaMap[modelId];
+      return media;
     }
 
-    function getAudioLibraryItemName(item, fallback = 'multimedia') {
-      return String(item?.name || item?.title || item?.filename || fallback).trim() || fallback;
+    function saveCharacterMedia(characterId, patch = {}) {
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const current = getCharacterMedia(characterId);
+      mediaMap[String(characterId || '').trim()] = normalizeCharacterMediaEntry({ ...current, ...patch });
+      saveCollectionModel();
     }
 
-    function sanitizeDownloadFilename(name, fallback = 'univoicer-multimedia') {
-      const cleanName = String(name || fallback)
-        .trim()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9._-]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      return cleanName || fallback;
+    function audioItemMatchesCharacter(audioItem, characterId) {
+      const itemCharacterId = String(audioItem?.characterId || '').trim();
+      if (!itemCharacterId) return false;
+      if (itemCharacterId === characterId) return true;
+      const modelCharacter = getCharacterModelRecordByProfileId(characterId);
+      if (modelCharacter?.id && itemCharacterId === modelCharacter.id) return true;
+      const characterName = getCharacterNameById(characterId);
+      return Boolean(characterName && getCharacterIdByName(characterName) === itemCharacterId);
     }
 
-    function guessFileExtensionFromUrl(url, contentType = '') {
-      const type = String(contentType || '').toLowerCase();
-      if (type.includes('png')) return 'png';
-      if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
-      if (type.includes('webp')) return 'webp';
-      if (type.includes('gif')) return 'gif';
-      if (type.includes('mpeg') || type.includes('mp3')) return 'mp3';
-      if (type.includes('wav')) return 'wav';
-      if (type.includes('ogg')) return 'ogg';
-      if (type.includes('mp4')) return 'mp4';
+    function getUrlExtension(url, fallback = 'bin') {
       try {
-        const parsed = new URL(String(url || ''), window.location.href);
-        const extension = parsed.pathname.split('/').pop()?.split('.').pop()?.toLowerCase() || '';
-        return /^[a-z0-9]{2,5}$/.test(extension) ? extension : '';
+        const pathname = new URL(url, window.location.href).pathname;
+        const match = pathname.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
       } catch (_) {
-        return '';
+        const clean = String(url || '').split('?')[0];
+        const match = clean.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
       }
     }
 
-    function normalizeDownloadResource(resource, index) {
-      const url = String(resource?.url || '').trim();
-      const extension = guessFileExtensionFromUrl(url, resource?.contentType);
-      const baseName = sanitizeDownloadFilename(resource?.filename || resource?.label || `multimedia-${index + 1}`);
-      return {
-        ...resource,
-        url,
-        filename: extension && !baseName.toLowerCase().endsWith(`.${extension}`) ? `${baseName}.${extension}` : baseName
-      };
-    }
-
-    function addUniqueDownloadResource(resources, seenUrls, resource) {
-      const url = String(resource?.url || '').trim();
-      if (!url || seenUrls.has(url)) return;
-      seenUrls.add(url);
-      resources.push(resource);
-    }
-
-    function isPotentiallyAssignedToCharacter(item, characterId, characterName) {
-      const normalizedCharacterName = normalizeName(characterName || '');
-      const normalizedCharacterId = normalizeName(characterId || '');
-      const explicitValues = [
-        item?.characterId,
-        item?.personajeId,
-        item?.character_id,
-        item?.assignedCharacterId,
-        item?.assigned_character_id,
-        item?.characterName,
-        item?.personaje,
-        item?.assignedCharacter,
-        item?.assigned_character
-      ].map(value => normalizeName(value || '')).filter(Boolean);
-      if (explicitValues.some(value => value === normalizedCharacterId || value === normalizedCharacterName)) return true;
-
-      const listValues = [item?.characterIds, item?.personajeIds, item?.characters, item?.personajes]
-        .flatMap(value => Array.isArray(value) ? value : [])
-        .map(value => normalizeName(value?.id || value?.name || value || ''))
-        .filter(Boolean);
-      if (listValues.some(value => value === normalizedCharacterId || value === normalizedCharacterName)) return true;
-
-      const itemName = normalizeName(getAudioLibraryItemName(item, ''));
-      return Boolean(normalizedCharacterName && itemName.includes(normalizedCharacterName));
-    }
-
-    function collectAssignedAudioResources(items, characterId, characterName, kind) {
-      return (Array.isArray(items) ? items : [])
-        .filter((item) => isPotentiallyAssignedToCharacter(item, characterId, characterName))
-        .map((item) => ({
-          kind,
-          url: getAudioLibraryItemUrl(item),
-          label: `${kind}-${getAudioLibraryItemName(item, characterName)}`,
-          contentType: item?.contentType || item?.mimeType || item?.type || ''
-        }))
-        .filter((resource) => resource.url);
-    }
-
-    function collectAssignedMixResources(characterVideos, characterId, characterName) {
-      const mixCandidates = [];
-      const addMixCandidate = (source, labelPrefix = 'mezcla') => {
-        if (!source || typeof source !== 'object') return;
-        [
-          source.mezclaUrl,
-          source.mixUrl,
-          source.audioMixUrl,
-          source.mixedAudioUrl,
-          source.mezcla?.url,
-          source.mezcla?.downloadURL,
-          source.mix?.url,
-          source.mix?.downloadURL,
-          source.assignedMix?.url,
-          source.assignedMix?.downloadURL
-        ].forEach((url, index) => {
-          const cleanUrl = String(url || '').trim();
-          if (cleanUrl) {
-            mixCandidates.push({
-              kind: 'mezcla',
-              url: cleanUrl,
-              label: `${labelPrefix}-${source.personaje || source.name || characterName || index + 1}`,
-              contentType: source.mezcla?.contentType || source.mix?.contentType || source.assignedMix?.contentType || source.contentType || ''
-            });
-          }
-        });
-      };
-
-      characterVideos.forEach((video) => addMixCandidate(video, 'mezcla-video'));
-      collectionModel.characters
-        .filter((character) => normalizeName(character.id) === normalizeName(characterId) || normalizeName(character.name) === normalizeName(characterName))
-        .forEach((character) => addMixCandidate(character, 'mezcla-personaje'));
-      (Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [])
-        .filter((item) => isPotentiallyAssignedToCharacter(item, characterId, characterName))
-        .forEach((item) => {
-          const url = getAudioLibraryItemUrl(item);
-          if (url) {
-            mixCandidates.push({
-              kind: 'mezcla',
-              url,
-              label: `mezcla-${getAudioLibraryItemName(item, characterName)}`,
-              contentType: item?.contentType || item?.mimeType || item?.type || ''
-            });
-          }
-        });
-      return mixCandidates;
-    }
-
-    function collectCharacterImageResources(characterVideos, characterName) {
-      const imageCandidates = [];
-      const pushImage = (url, label, contentType = 'image/*') => {
-        const cleanUrl = String(url || '').trim();
-        if (cleanUrl) imageCandidates.push({ kind: 'imagen', url: cleanUrl, label, contentType });
-      };
-
-      characterVideos.forEach((video, index) => {
-        pushImage(video?.thumbnail, `imagen-${characterName}-${index + 1}`);
-        pushImage(video?.imageUrl || video?.imagen_url || video?.coverUrl || video?.portada_url, `imagen-extra-${characterName}-${index + 1}`);
-        const youtubeId = getYoutubeId(video?.url_youtube || video?.url_video || '');
-        if (youtubeId) pushImage(`https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`, `youtube-${characterName}-${index + 1}.jpg`, 'image/jpeg');
-      });
-      pushImage(getCharacterLockedAvatarUrl(characterName), `avatar-bloqueado-${characterName}`);
-
-      return imageCandidates;
-    }
-
-    function triggerResourceDownload(resource, index) {
-      const normalized = normalizeDownloadResource(resource, index);
-      if (!normalized.url) throw new Error('URL vacía');
-      if (!normalized.url.startsWith('data:') && !normalized.url.startsWith('blob:')) {
-        try {
-          new URL(normalized.url, window.location.href);
-        } catch (_) {
-          throw new Error('URL inválida');
-        }
-      }
+    function triggerFileDownload(url, filename) {
+      const cleanUrl = String(url || '').trim();
+      if (!cleanUrl) return;
       const anchor = document.createElement('a');
-      anchor.href = normalized.url;
-      anchor.download = normalized.filename;
-      anchor.rel = 'noopener';
+      anchor.href = cleanUrl;
+      anchor.download = filename || '';
       anchor.target = '_blank';
+      anchor.rel = 'noopener';
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      return normalized;
-    }
-
-    function downloadCharacterMultimedia(characterId) {
-      const characterName = getCharacterNameById(characterId) || String(characterId || '').trim();
-      if (!characterName) {
-        setIndiceCharacterFeedback('No se pudo identificar el personaje.', 'error');
-        setCharacterProfileFeedback('No se pudo identificar el personaje.', 'error');
-        return;
-      }
-
-      const normalizedCharacter = normalizeName(characterName);
-      const characterVideos = VIDEOS.filter((video) => normalizeName(video.personaje || '') === normalizedCharacter);
-      const resources = [];
-      const seenUrls = new Set();
-
-      collectCharacterImageResources(characterVideos, characterName)
-        .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
-
-      const mixResources = collectAssignedMixResources(characterVideos, characterId, characterName);
-      if (mixResources.length) {
-        mixResources.forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
-      } else {
-        collectAssignedAudioResources(state.audioLibrary?.voces, characterId, characterName, 'voz')
-          .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
-        collectAssignedAudioResources(state.audioLibrary?.fondos, characterId, characterName, 'fondo')
-          .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
-      }
-
-      if (!resources.length) {
-        const message = 'No hay multimedia descargable para este personaje.';
-        setIndiceCharacterFeedback(message, 'error');
-        setCharacterProfileFeedback(message, 'error');
-        return;
-      }
-
-      const failed = [];
-      const downloaded = [];
-      resources.forEach((resource, index) => {
-        try {
-          downloaded.push(triggerResourceDownload(resource, index));
-        } catch (error) {
-          failed.push(`${resource.label || resource.kind || 'recurso'}: ${error?.message || 'no se pudo iniciar la descarga'}`);
-        }
-      });
-
-      const strategyNote = 'Estrategia simple: descargas individuales con <a download>. No se agrega ZIP para evitar dependencias externas.';
-      const message = failed.length
-        ? `${strategyNote} Se iniciaron ${downloaded.length} descarga(s), pero fallaron ${failed.length}: ${failed.join('; ')}.`
-        : `${strategyNote} Se iniciaron ${downloaded.length} descarga(s) de multimedia.`;
-      setIndiceCharacterFeedback(message, failed.length ? 'error' : 'success');
-      setCharacterProfileFeedback(message, failed.length ? 'error' : 'success');
     }
 
     function getCharacterProfileData(characterId) {
@@ -5141,8 +5495,117 @@
       return { characterName, videos, actors, universes, blockedActors, status };
     }
 
+    function getUniverseNameByAnyId(universeId) {
+      const cleanId = String(universeId || '').trim();
+      if (!cleanId) return '';
+      const modelUniverse = (collectionModel.universes || []).find((item) => String(item?.id || '').trim() === cleanId);
+      if (modelUniverse?.name) return String(modelUniverse.name || '').trim();
+      const nodeUniverse = (state.universeNodes || []).find((item) => String(item?.id || '').trim() === cleanId);
+      return nodeUniverse?.name ? String(nodeUniverse.name || '').trim() : '';
+    }
+
+    function getCharacterUniverseReferences(characterId, universeOverride = null) {
+      const characterName = getCharacterNameById(characterId) || String(characterId || '').trim();
+      const universeNames = Array.isArray(universeOverride)
+        ? universeOverride
+        : getCharacterProfileData(characterId).universes;
+      const nameSet = new Set();
+      const idSet = new Set();
+
+      normalizeUniverseList(universeNames, { fallbackToUnassigned: false }).forEach((universeName) => {
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      });
+
+      const modelCharacter = (collectionModel.characters || []).find((item) => (
+        getCharacterIdByName(item?.name || '') === characterId || normalizeName(item?.name || '') === normalizeName(characterName)
+      ));
+      (modelCharacter?.universeIds || []).forEach((universeId) => {
+        const cleanId = String(universeId || '').trim();
+        if (!cleanId) return;
+        idSet.add(normalizeEntityName(cleanId));
+        const universeName = getUniverseNameByAnyId(cleanId);
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      });
+
+      return { ids: idSet, names: nameSet };
+    }
+
+    function getBackgroundUniverseReferences(background) {
+      const idSet = new Set();
+      const nameSet = new Set();
+      const registerId = (rawId) => {
+        const cleanId = String(rawId || '').trim();
+        if (!cleanId) return;
+        idSet.add(normalizeEntityName(cleanId));
+        const universeName = getUniverseNameByAnyId(cleanId);
+        const normalizedName = normalizeUniverseName(universeName);
+        if (normalizedName) nameSet.add(normalizedName);
+      };
+      const registerName = (rawName) => {
+        const normalizedName = normalizeUniverseName(rawName);
+        if (normalizedName) nameSet.add(normalizedName);
+      };
+
+      [
+        ...(Array.isArray(background?.universeIds) ? background.universeIds : []),
+        ...(Array.isArray(background?.universoIds) ? background.universoIds : []),
+        background?.universeId,
+        background?.universoId
+      ].forEach(registerId);
+      [
+        ...(Array.isArray(background?.universeNames) ? background.universeNames : []),
+        ...(Array.isArray(background?.universes) ? background.universes : []),
+        ...(Array.isArray(background?.universos) ? background.universos : []),
+        ...(Array.isArray(background?.universo) ? background.universo : []),
+        background?.universeName,
+        background?.universe,
+        Array.isArray(background?.universo) ? '' : background?.universo
+      ].forEach(registerName);
+
+      return { ids: idSet, names: nameSet };
+    }
+
+    function getAvailableBackgroundsForCharacter(characterId, { universeOverride = null } = {}) {
+      const characterUniverses = getCharacterUniverseReferences(characterId, universeOverride);
+      if (!characterUniverses.ids.size && !characterUniverses.names.size) return [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      return fondos.filter((background) => {
+        const backgroundUniverses = getBackgroundUniverseReferences(background);
+        const sharesId = [...backgroundUniverses.ids].some((universeId) => characterUniverses.ids.has(universeId));
+        const sharesName = [...backgroundUniverses.names].some((universeName) => characterUniverses.names.has(universeName));
+        return sharesId || sharesName;
+      });
+    }
+
+    function getCharacterBackgroundId(characterName) {
+      const normalizedCharacter = normalizeName(characterName || '');
+      if (!normalizedCharacter) return '';
+      const backgroundIds = new Set((state.audioLibrary?.fondos || []).map((item) => String(item?.id || '').trim()).filter(Boolean));
+      const sourceVideo = VIDEOS.find((video) => normalizeName(video.personaje || '') === normalizedCharacter
+        && backgroundIds.has(String(video.backgroundId || video.background_id || '').trim()));
+      return sourceVideo ? String(sourceVideo.backgroundId || sourceVideo.background_id || '').trim() : '';
+    }
+
+    function setCharacterBackgroundId(characterName, backgroundId) {
+      const normalizedCharacter = normalizeName(characterName || '');
+      if (!normalizedCharacter) return false;
+      const cleanBackgroundId = String(backgroundId || '').trim();
+      let touched = false;
+      VIDEOS.forEach((video) => {
+        if (normalizeName(video.personaje || '') !== normalizedCharacter) return;
+        if (cleanBackgroundId) video.backgroundId = cleanBackgroundId;
+        else delete video.backgroundId;
+        delete video.background_id;
+        touched = true;
+      });
+      return touched;
+    }
+
     function renderCharacterProfile(characterId) {
       const { characterName, videos, actors, universes, blockedActors, status } = getCharacterProfileData(characterId);
+      const assignedMix = getAssignedMixForCharacterId(characterId);
       if (!characterName) {
         viewCharacterProfile.innerHTML = `
           <section class="mock-shell">
@@ -5154,6 +5617,16 @@
         document.getElementById('backFromCharacterMissing')?.addEventListener('click', () => changeView('map'));
         return;
       }
+      const characterMedia = getCharacterMedia(characterId);
+      const characterVoices = (Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [])
+        .filter((voice) => audioItemMatchesCharacter(voice, characterId));
+      const availableBackgrounds = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      const selectedBackgroundId = availableBackgrounds.some((background) => background.id === characterMedia.backgroundId)
+        ? characterMedia.backgroundId
+        : '';
+      if (selectedBackgroundId !== characterMedia.backgroundId) characterMedia.backgroundId = selectedBackgroundId;
+      const selectedBackground = availableBackgrounds.find((background) => background.id === selectedBackgroundId) || null;
+
       viewCharacterProfile.innerHTML = `
         <section class="hud-panel holo-card profile-layout">
           <div class="actions">
@@ -5176,14 +5649,118 @@
             <div class="actions"><button id="addUniverseToCharacter" class="neon-btn">Agregar universo</button></div>
           </article>
           <article class="profile-section">
+            <h4>Edición</h4>
+            <div class="profile-edit-block">
+              <h5>Voces del personaje (${characterVoices.length})</h5>
+              <ul class="detail-list detail-list-soft">
+                ${characterVoices.map((voice) => `
+                  <li>
+                    ${escapeHtml(voice.name || 'Voz sin nombre')}
+                    ${voice.url ? ` · <a href="${escapeHtml(voice.url)}" target="_blank" rel="noopener">abrir</a>` : ''}
+                  </li>
+                `).join('') || '<li>Sin voces asignadas a este personaje.</li>'}
+              </ul>
+            </div>
+            <form id="characterImageUrlForm" class="profile-edit-block audio-upload-inline" style="align-items: flex-end;">
+              <label style="flex: 1;">URL de imagen
+                <input id="characterImageUrlInput" type="url" class="control-input" placeholder="https://..." autocomplete="off">
+              </label>
+              <button type="submit" class="neon-btn">Guardar imagen</button>
+            </form>
+            <ul class="detail-list detail-list-soft">
+              ${characterMedia.imageUrls.map((url, index) => `
+                <li>
+                  <a href="${escapeHtml(url)}" target="_blank" rel="noopener">Imagen ${index + 1}</a>
+                  <button type="button" class="neon-btn" data-delete-character-image="${index}">Eliminar</button>
+                </li>
+              `).join('') || '<li>Sin imágenes guardadas.</li>'}
+            </ul>
+            <label class="profile-edit-block">Fondo disponible
+              <select id="characterBackgroundSelect" class="control-input">
+                <option value="">Sin fondo asignado</option>
+                ${availableBackgrounds.map((background) => `
+                  <option value="${escapeHtml(background.id)}" ${background.id === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>
+                `).join('')}
+              </select>
+            </label>
+            <p class="section-note">Fondo asignado: ${selectedBackground ? escapeHtml(selectedBackground.name || 'Fondo sin nombre') : 'ninguno'}.</p>
+            <div class="actions"><button id="downloadCharacterMedia" type="button" class="neon-btn neon-btn--primary">Descargar multimedia</button></div>
+          </article>
+          <article class="profile-section">
             <h4>Videos asociados (${videos.length})</h4>
             <ul class="detail-list detail-list-soft">
               ${videos.map(item => `<li>${item.titulo || 'Sin título'} · ${item.actor_de_doblaje || 'Sin actor'} · ${(getVideoUniverses(item).join(', ') || 'Sin universo')}</li>`).join('') || '<li>Sin videos asociados.</li>'}
             </ul>
           </article>
+          <article class="profile-section">
+            <h4>Multimedia asignada</h4>
+            <p class="muted">${assignedMix ? `Mezcla asignada: ${escapeHtml(assignedMix.name || 'Mezcla sin nombre')}.` : 'Sin mezcla asignada.'}</p>
+            <div class="actions"><button id="downloadCharacterMultimediaBtn" class="neon-btn" ${assignedMix ? '' : 'disabled'}>Descargar multimedia</button></div>
+          </article>
         </section>
       `;
       document.getElementById('backFromCharacterProfile')?.addEventListener('click', () => changeView(state.universe ? 'universe' : 'map'));
+      document.getElementById('characterImageUrlForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = document.getElementById('characterImageUrlInput');
+        const imageUrl = String(input?.value || '').trim();
+        if (!imageUrl) return setCharacterProfileFeedback('Debes ingresar una URL de imagen.', 'error');
+        try {
+          new URL(imageUrl, window.location.href);
+        } catch (_) {
+          return setCharacterProfileFeedback('La URL de imagen no es válida.', 'error');
+        }
+        const nextImageUrls = [...new Set([...characterMedia.imageUrls, imageUrl])];
+        saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback('Imagen guardada correctamente.');
+      });
+      viewCharacterProfile.querySelectorAll('[data-delete-character-image]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number(btn.dataset.deleteCharacterImage);
+          if (!Number.isInteger(index) || index < 0) return;
+          const nextImageUrls = characterMedia.imageUrls.filter((_, currentIndex) => currentIndex !== index);
+          saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
+          renderCharacterProfile(characterId);
+          setCharacterProfileFeedback('Imagen eliminada correctamente.');
+        });
+      });
+      document.getElementById('characterBackgroundSelect')?.addEventListener('change', (event) => {
+        const backgroundId = String(event.target?.value || '').trim();
+        saveCharacterMedia(characterId, { backgroundId });
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback(backgroundId ? 'Fondo asignado correctamente.' : 'Fondo desasignado correctamente.');
+      });
+      document.getElementById('downloadCharacterMedia')?.addEventListener('click', () => {
+        const safeCharacterName = cssSafe(characterName || 'personaje') || 'personaje';
+        let downloadCount = 0;
+        characterMedia.imageUrls.forEach((url, index) => {
+          const extension = getUrlExtension(url, 'jpg');
+          triggerFileDownload(url, `${safeCharacterName}-imagen-${index + 1}.${extension}`);
+          downloadCount += 1;
+        });
+        characterVoices.forEach((voice, index) => {
+          if (!voice.url) return;
+          const extension = getUrlExtension(voice.url, 'mp3');
+          const voiceName = cssSafe(voice.name || `voz-${index + 1}`) || `voz-${index + 1}`;
+          triggerFileDownload(voice.url, `${safeCharacterName}-${voiceName}.${extension}`);
+          downloadCount += 1;
+        });
+        if (selectedBackground?.url) {
+          const extension = getUrlExtension(selectedBackground.url, 'mp3');
+          const backgroundName = cssSafe(selectedBackground.name || 'fondo') || 'fondo';
+          triggerFileDownload(selectedBackground.url, `${safeCharacterName}-${backgroundName}.${extension}`);
+          downloadCount += 1;
+        }
+        if (characterMedia.mixUrl) {
+          const extension = getUrlExtension(characterMedia.mixUrl, 'wav');
+          triggerFileDownload(characterMedia.mixUrl, `${safeCharacterName}-mezcla.${extension}`);
+          downloadCount += 1;
+        }
+        setCharacterProfileFeedback(downloadCount
+          ? `Descarga iniciada para ${downloadCount} archivo(s).`
+          : 'No hay multimedia asignada para descargar.', downloadCount ? 'success' : 'error');
+      });
       document.getElementById('addActorToCharacter')?.addEventListener('click', () => {
         const inputName = prompt(`Nombre del actor para ${characterName}:`, '');
         if (inputName === null) return;
@@ -6202,6 +6779,17 @@
         const currentCharacterRoleCategory = ROLE_CATEGORY_OPTIONS.find((categoryOption) => (
           normalizeRoleCategory(categoryOption) === normalizeRoleCategory(roleSourceVideo?.categoriaRol || roleSourceVideo?.categoria_rol || '')
         )) || 'A';
+        const focusedCharacterId = getCharacterIdByName(focusedCharacter);
+        const availableBackgrounds = getAvailableBackgroundsForCharacter(focusedCharacterId);
+        const currentBackgroundId = getCharacterBackgroundId(focusedCharacter);
+        const selectedBackgroundId = availableBackgrounds.some((item) => String(item.id || '') === currentBackgroundId) ? currentBackgroundId : '';
+        const hasCharacterUniverses = universos.length > 0;
+        const backgroundSelectDisabled = !hasCharacterUniverses || !availableBackgrounds.length;
+        const backgroundHelpText = !hasCharacterUniverses
+          ? 'El selector está deshabilitado porque este personaje no tiene universos asociados.'
+          : !availableBackgrounds.length
+            ? 'No hay fondos asociados a los universos de este personaje.'
+            : 'Solo se listan fondos que comparten al menos un universo con este personaje.';
 
         const isCharacterLocked = realVideos.length === 0;
         const customLockedAvatarUrl = getCharacterLockedAvatarUrl(focusedCharacter);
@@ -6224,6 +6812,10 @@
         const profileImage = !isCharacterLocked && unlockedActors.length > 0 && unlockedActors[0].video
           ? getVideoThumbnail(unlockedActors[0].video)
           : createPlaceholderCover(focusedCharacter);
+        const focusedCharacterModel = (collectionModel.characters || [])
+          .find((character) => normalizeName(character?.name || '') === normalizeName(focusedCharacter));
+        const focusedAssignedMix = getAssignedMixForCharacterId(focusedCharacterModel?.id || '');
+
         const profileAvatarMarkup = isCharacterLocked
           ? `
               <div
@@ -6295,6 +6887,13 @@
                 <label>Avatar bloqueado (URL opcional)
                   <input type="text" name="lockedAvatarUrl" value="${customLockedAvatarUrl}" placeholder="https://...">
                 </label>
+                <label>Fondo
+                  <select name="backgroundId" ${backgroundSelectDisabled ? 'disabled' : ''}>
+                    <option value="">${backgroundSelectDisabled ? 'Sin fondos disponibles' : 'Sin fondo asignado'}</option>
+                    ${availableBackgrounds.map((background) => `<option value="${escapeHtml(background.id)}" ${String(background.id || '') === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>`).join('')}
+                  </select>
+                  <span class="muted">${escapeHtml(backgroundHelpText)}</span>
+                </label>
                 <label>Rol
                   <select name="role" required>
                     ${['Protagonista', 'Villano', 'Secundario', 'Recurrente']
@@ -6324,6 +6923,14 @@
                 <button type="button" id="cancelDeleteCharacterBtn" class="neon-btn">Cancelar</button>
               </div>
             </section>
+
+            <article class="profile-section">
+              <h4 class="profile-section__title">📦 Multimedia del personaje</h4>
+              <p class="muted">${focusedAssignedMix ? `Mezcla asignada: ${escapeHtml(focusedAssignedMix.name || 'Mezcla sin nombre')}.` : 'Sin mezcla asignada.'}</p>
+              <div class="actions">
+                <button type="button" class="neon-btn toon-btn" data-download-character-multimedia ${focusedAssignedMix ? '' : 'disabled'}>Descargar multimedia</button>
+              </div>
+            </article>
 
             <article class="profile-section">
               <h4 class="profile-section__title">🎙️ Actores de doblaje asignados (${actorCards.length})</h4>
@@ -6360,6 +6967,22 @@
           renderIndiceView();
         });
 
+        viewIndice.querySelector('[data-download-character-multimedia]')?.addEventListener('click', async () => {
+          const feedback = document.getElementById('indiceCharacterFeedback');
+          try {
+            const message = await downloadCharacterMultimedia(focusedCharacterModel?.id || '');
+            if (feedback) {
+              feedback.style.color = '#9ff7c8';
+              feedback.textContent = message;
+            }
+          } catch (err) {
+            if (feedback) {
+              feedback.style.color = '#ffb6b6';
+              feedback.textContent = err?.message || 'No se pudo descargar la multimedia.';
+            }
+          }
+        });
+
         // EDICIÓN AVANZADA
         document.getElementById('editCharacterBtn')?.addEventListener('click', () => {
           state.showCharacterInlineEdit = !state.showCharacterInlineEdit;
@@ -6383,12 +7006,22 @@
           const selectedActors = formData.getAll('characterActors').map((value) => String(value || '').trim()).filter(Boolean);
           const selectedUniverses = formData.getAll('characterUniverses').map((value) => String(value || '').trim()).filter(Boolean);
           const lockedAvatarUrl = String(formData.get('lockedAvatarUrl') || '').trim();
+          const selectedBackgroundId = String(formData.get('backgroundId') || '').trim();
           const nextRole = String(formData.get('role') || '').trim() || 'Recurrente';
           const nextRoleCategory = String(formData.get('roleCategory') || '').trim().toUpperCase() || 'A';
           if (!newName) return;
 
           const newActorsList = [...new Set(selectedActors)];
           const parsedUniverses = [...new Set(selectedUniverses)];
+          const validBackgroundsForSelection = getAvailableBackgroundsForCharacter(getCharacterIdByName(focusedCharacter), { universeOverride: parsedUniverses });
+          if (selectedBackgroundId && !validBackgroundsForSelection.some((background) => String(background.id || '') === selectedBackgroundId)) {
+            const feedback = document.getElementById('indiceCharacterFeedback');
+            if (feedback) {
+              feedback.textContent = 'El fondo seleccionado no comparte universo con el personaje.';
+              feedback.style.color = '#ffb6b6';
+            }
+            return;
+          }
           const {
             canonicalName: cleanName,
             canonicalRole: cleanRole,
@@ -6439,12 +7072,14 @@
                   rol: cleanRole,
                   categoriaRol: cleanRoleCategory,
                   thumbnail: createPlaceholderCover(cleanName),
-                  locked_avatar_url: lockedAvatarUrl
+                  locked_avatar_url: lockedAvatarUrl,
+                  ...(selectedBackgroundId ? { backgroundId: selectedBackgroundId } : {})
               });
               blockCharacterForActor(actor, cleanName);
           });
 
           setCharacterLockedAvatarUrl(cleanName, lockedAvatarUrl);
+          setCharacterBackgroundId(cleanName, selectedBackgroundId);
           state.showCharacterInlineEdit = false;
           state.indiceCharacterFocus = cleanName;
           saveBlockedCharacters();
@@ -7657,11 +8292,12 @@
 
       const renderAudioItems = (category) => {
         const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
+        const itemCategoryClass = category === 'voces' ? 'audio-library-item--voice' : 'audio-library-item--background';
         if (!items.length) return '<p class="muted">No hay archivos cargados aún.</p>';
         return `
           <ul class="audio-library-list">
             ${items.map((item) => `
-              <li class="audio-library-item">
+              <li class="audio-library-item ${itemCategoryClass}">
                 <div>
                   <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                   <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
@@ -7694,7 +8330,7 @@
                   <div class="audio-library-header">
                     <h3>${label}</h3>
                     <button type="button" class="neon-btn" data-audio-trigger="${key}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'SUBIENDO...' : buttonLabel}</button>
-                    <input type="file" accept="audio/*" data-audio-input="${key}" class="audio-library-input" hidden>
+                    <input type="file" accept="audio/*" multiple data-audio-input="${key}" class="audio-library-input" hidden>
                   </div>
                   <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
                   ${renderAudioItems(key)}
@@ -7755,6 +8391,7 @@
       const targetView = isVoces ? viewAudioVoces : viewAudioFondos;
       const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
       const status = state.uploadStatusByCategory?.[category] || { loading: false, error: '', success: '' };
+      const itemCategoryClass = isVoces ? 'audio-library-item--voice' : 'audio-library-item--background';
 
       targetView.innerHTML = `
         <section class="mock-shell">
@@ -7763,7 +8400,7 @@
           <div class="audio-upload-inline">
             <input type="text" class="control-input" data-audio-name-input="${category}" placeholder="Nombre para mostrar (opcional)">
             <button class="neon-btn toon-btn" data-audio-add-btn="${category}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'Subiendo...' : addLabel}</button>
-            <input type="file" accept="audio/*" data-audio-file-input="${category}" hidden>
+            <input type="file" accept="audio/*" multiple data-audio-file-input="${category}" hidden>
           </div>
           <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
           <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
@@ -7773,7 +8410,7 @@
           ${items.length ? `
             <ul class="audio-library-list">
               ${items.map((item) => `
-                <li class="audio-library-item">
+                <li class="audio-library-item ${itemCategoryClass}">
                   <div>
                     <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                     <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
@@ -7781,6 +8418,7 @@
                   <audio controls preload="none" src="${escapeHtml(item.url || '')}" aria-label="Reproducir ${escapeHtml(item.name || 'audio')}"></audio>
                   <div class="audio-library-item-actions">
                     <button type="button" class="neon-btn" data-edit-audio-item="${escapeHtml(item.id)}">✂️ Editar audio</button>
+                    <button type="button" class="neon-btn" data-assign-audio-item="${escapeHtml(item.id)}">Designar a</button>
                     <button type="button" class="neon-btn audio-used-btn" data-mark-used-audio="${escapeHtml(item.id)}" aria-label="Marcar como usado y borrar ${escapeHtml(item.name || 'audio')}" title="Marcar audio como usado">✅ Usado</button>
                   </div>
                 </li>
@@ -7806,12 +8444,104 @@
           openAudioTrimEditorModal(category, audioId);
         });
       });
+      targetView.querySelectorAll('[data-assign-audio-item]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const audioId = String(btn.dataset.assignAudioItem || '');
+          if (!audioId) return;
+          openAssignAudioModal(category, audioId);
+        });
+      });
       targetView.querySelectorAll('[data-mark-used-audio]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const audioId = String(btn.dataset.markUsedAudio || '');
           if (!audioId) return;
           openMarkAudioLibraryAsUsedModal(category, audioId);
         });
+      });
+    }
+
+    function openAssignAudioModal(category, audioId) {
+      const normalizedCategory = category === 'fondos' ? 'fondos' : 'voces';
+      const items = Array.isArray(state.audioLibrary?.[normalizedCategory]) ? state.audioLibrary[normalizedCategory] : [];
+      const audioItem = items.find((item) => item.id === audioId);
+      if (!audioItem) return;
+
+      const isVoces = normalizedCategory === 'voces';
+      const sourceOptions = isVoces ? collectionModel.characters : collectionModel.universes;
+      const options = (Array.isArray(sourceOptions) ? sourceOptions : [])
+        .filter((item) => item && item.id)
+        .map((item) => ({ id: String(item.id), name: String(item.name || (isVoces ? 'Sin personaje' : 'Sin universo')) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+      const selectedUniverseIds = new Set(Array.isArray(audioItem.universeIds) ? audioItem.universeIds.map(String) : []);
+      const currentCharacterId = String(audioItem.characterId || '');
+      const emptyMessage = isVoces
+        ? 'No hay personajes disponibles para designar esta voz.'
+        : 'No hay universos disponibles para designar este fondo.';
+
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content assign-audio-modal">
+          <h3 class="section-title">Designar audio</h3>
+          <p class="muted">${escapeHtml(audioItem.name || 'Archivo sin nombre')}</p>
+          <p>${isVoces ? 'Elegí un personaje para asociar esta voz.' : 'Elegí uno o más universos para asociar este fondo.'}</p>
+          ${options.length ? `
+            <div class="assign-audio-modal__list" role="group" aria-label="${isVoces ? 'Personajes' : 'Universos'}">
+              ${options.map((option) => `
+                <label class="assign-audio-modal__option">
+                  <input
+                    type="${isVoces ? 'radio' : 'checkbox'}"
+                    name="assign-audio-target"
+                    value="${escapeHtml(option.id)}"
+                    ${isVoces
+                      ? option.id === currentCharacterId ? 'checked' : ''
+                      : selectedUniverseIds.has(option.id) ? 'checked' : ''}
+                  >
+                  <span>${escapeHtml(option.name)}</span>
+                </label>
+              `).join('')}
+            </div>
+          ` : `<p class="muted">${emptyMessage}</p>`}
+          <div class="actions">
+            <button type="button" class="neon-btn" data-modal-cancel-assign>Cancelar</button>
+            <button type="button" class="neon-btn neon-btn--primary" data-modal-confirm-assign ${options.length ? '' : 'disabled'}>Confirmar</button>
+          </div>
+        </article>
+      `;
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) modal.remove();
+      });
+      document.body.appendChild(modal);
+
+      modal.querySelector('[data-modal-cancel-assign]')?.addEventListener('click', () => modal.remove());
+      modal.querySelector('[data-modal-confirm-assign]')?.addEventListener('click', () => {
+        const targetIndex = items.findIndex((item) => item.id === audioId);
+        if (targetIndex < 0) return;
+
+        if (isVoces) {
+          const selectedCharacterId = String(modal.querySelector('input[name="assign-audio-target"]:checked')?.value || '');
+          if (!selectedCharacterId) {
+            alert('Seleccioná un personaje para designar esta voz.');
+            return;
+          }
+          items[targetIndex] = {
+            ...items[targetIndex],
+            characterId: selectedCharacterId
+          };
+        } else {
+          const universeIds = Array.from(modal.querySelectorAll('input[name="assign-audio-target"]:checked'))
+            .map((input) => String(input.value || ''))
+            .filter(Boolean);
+          items[targetIndex] = {
+            ...items[targetIndex],
+            universeIds: [...new Set(universeIds)]
+          };
+        }
+
+        state.audioLibrary[normalizedCategory] = items;
+        saveAudioLibrary();
+        renderAudioCategoryView(normalizedCategory);
+        modal.remove();
       });
     }
 
@@ -7831,7 +8561,7 @@
           <div class="audio-upload-inline">
             <button class="neon-btn toon-btn" data-audio-mixer-preview>Previsualizar</button>
             <button class="neon-btn toon-btn" data-audio-mixer-pause>Pausar</button>
-            <button class="neon-btn toon-btn" data-audio-mixer-generate>Generar mezcla</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-save>Guardar</button>
             <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
           </div>
         </section>
@@ -7916,11 +8646,50 @@
         const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
         if (feedback) feedback.textContent = `Estado: En pausa · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s`;
       });
-      viewAudioMixer.querySelector('[data-audio-mixer-generate]')?.addEventListener('click', () => {
+      viewAudioMixer.querySelector('[data-audio-mixer-save]')?.addEventListener('click', async (event) => {
         state.audioMixer.isPlaying = false;
         state.audioMixer.previewPositionSec = 0;
+        const saveBtn = event.currentTarget;
         const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
-        if (feedback) feedback.textContent = 'Mezcla generada (stub). Próximo paso: exportar archivo resultante.';
+        const voiceItem = voces.find((item) => item.id === state.audioMixer.voiceId);
+        const backgroundItem = fondos.find((item) => item.id === state.audioMixer.backgroundId);
+        if (!voiceItem || !getAudioItemUrl(voiceItem)) {
+          if (feedback) feedback.textContent = 'Selecciona una voz válida antes de guardar.';
+          return;
+        }
+        if (!backgroundItem || !getAudioItemUrl(backgroundItem)) {
+          if (feedback) feedback.textContent = 'Selecciona un fondo válido antes de guardar.';
+          return;
+        }
+        try {
+          if (saveBtn) saveBtn.disabled = true;
+          if (feedback) feedback.textContent = 'Generando mezcla final...';
+          const [voiceBuffer, backgroundBuffer] = await Promise.all([
+            decodeAudioBufferFromUrl(getAudioItemUrl(voiceItem)),
+            decodeAudioBufferFromUrl(getAudioItemUrl(backgroundItem))
+          ]);
+          const mixedBuffer = await createMixedAudioBuffer({
+            voiceBuffer,
+            backgroundBuffer,
+            voiceVolume: state.audioMixer.voiceVolume,
+            backgroundVolume: state.audioMixer.backgroundVolume,
+            backgroundOffset: state.audioMixer.backgroundStartOffsetSec,
+            backgroundPadMode: state.audioMixer.backgroundPadMode
+          });
+          const blob = audioBufferToWavBlob(mixedBuffer);
+          if (feedback) feedback.textContent = 'Subiendo mezcla a Firebase Storage...';
+          const mixMetadata = await uploadMixedAudioBlob(blob, { voiceItem, backgroundItem });
+          if (feedback) feedback.textContent = 'Mezcla guardada. Selecciona el personaje al que se asignará.';
+          openAssignMixToCharacterModal(mixMetadata, {
+            onAssigned: (character) => {
+              if (feedback) feedback.textContent = `Mezcla guardada y asignada a ${character.name}.`;
+            }
+          });
+        } catch (err) {
+          if (feedback) feedback.textContent = normalizeAudioUploadError(err);
+        } finally {
+          if (saveBtn) saveBtn.disabled = false;
+        }
       });
     }
 
