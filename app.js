@@ -395,14 +395,33 @@
         universes: [],
         videos: [],
         worldMemberships: [],
-        audioLibrary: createEmptyAudioLibrary()
+        audioLibrary: createEmptyAudioLibrary(),
+        characterMedia: {}
       };
     }
 
     function createEmptyAudioLibrary() {
       return {
         voces: [],
-        fondos: []
+        fondos: [],
+        mezclas: []
+      };
+    }
+
+    function normalizeStringArray(value, { normalize = false } = {}) {
+      const rawValues = Array.isArray(value) ? value : (value ? [value] : []);
+      return [...new Set(rawValues
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .map((item) => normalize ? normalizeEntityName(item) : item)
+        .filter(Boolean))];
+    }
+
+    function normalizeCharacterAudioFields(rawCharacter = {}) {
+      return {
+        imageUrls: normalizeStringArray(rawCharacter.imageUrls || rawCharacter.images || rawCharacter.imagenes),
+        selectedBackgroundId: String(rawCharacter.selectedBackgroundId || rawCharacter.backgroundId || '').trim(),
+        assignedMixAudioId: String(rawCharacter.assignedMixAudioId || rawCharacter.mixAudioId || rawCharacter.mezclaId || '').trim()
       };
     }
 
@@ -501,7 +520,8 @@
           actorIds: Array.isArray(item.actorIds) ? [...new Set(item.actorIds.filter(Boolean).map(String))] : [],
           universeIds: Array.isArray(item.universeIds) ? [...new Set(item.universeIds.filter(Boolean).map(String))] : [],
           videoIds: Array.isArray(item.videoIds) ? [...new Set(item.videoIds.filter(Boolean).map(String))] : [],
-          unlocked: Boolean(item.unlocked)
+          unlocked: Boolean(item.unlocked),
+          ...normalizeCharacterAudioFields(item)
         })),
         universes: rawModel.universes.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -529,12 +549,16 @@
             .filter(item => item.worldUniverseId && item.parentUniverseId)
             .filter(item => rawUniverseIds.has(item.worldUniverseId) && rawUniverseIds.has(item.parentUniverseId))
           : [],
-        audioLibrary: normalizeAudioLibrary(rawModel.audioLibrary)
+        audioLibrary: normalizeAudioLibrary({
+          ...(rawModel.audioLibrary && typeof rawModel.audioLibrary === 'object' ? rawModel.audioLibrary : {}),
+          ...(rawModel.mezclas && typeof rawModel.mezclas === 'object' ? { mezclas: rawModel.mezclas } : {})
+        })
       };
     }
 
     function saveCollectionModel() {
       ensureCollectionModelAudioLibrary(collectionModel);
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
       localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       scheduleCloudSync();
     }
@@ -562,7 +586,7 @@
     function getOrCreateCharacter(model, characterName, characterMap) {
       const normalized = normalizeEntityName(characterName || 'Sin personaje');
       if (characterMap.has(normalized)) return characterMap.get(normalized);
-      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false };
+      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false, imageUrls: [], selectedBackgroundId: '', assignedMixAudioId: '' };
       model.characters.push(character);
       characterMap.set(normalized, character);
       return character;
@@ -673,7 +697,8 @@
             }))
             .filter((item) => item.worldUniverseId && item.parentUniverseId)
           : [],
-        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary)
+        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary),
+        characterMedia: normalizeCharacterMediaMap(baseModel.characterMedia)
       };
 
       const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
@@ -1257,6 +1282,16 @@
     function syncCollectionModelWithVideos(preserveActorsFromModel = collectionModel) {
       const nextModel = migrateLegacyVideosToModel(VIDEOS);
       nextModel.audioLibrary = normalizeAudioLibrary(preserveActorsFromModel?.audioLibrary);
+      const characterNameToPreservedFields = new Map(
+        (preserveActorsFromModel?.characters || []).map((character) => [
+          normalizeEntityName(character?.name),
+          normalizeCharacterAudioFields(character)
+        ])
+      );
+      (nextModel.characters || []).forEach((character) => {
+        const preservedFields = characterNameToPreservedFields.get(normalizeEntityName(character?.name));
+        if (preservedFields) Object.assign(character, preservedFields);
+      });
       const actorNameToActor = new Map(
         (nextModel.actors || []).map((actor) => [normalizeEntityName(actor.name), actor])
       );
@@ -1433,6 +1468,9 @@
         videos: normalizedVideos,
         universeNodes: state.universeNodes || [],
         universeMemberships: state.universeMemberships || {},
+        audioLibrary: normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary),
+        mezclas: normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary).mezclas,
+        collectionModel: parseModelFromStorage(collectionModel) || collectionModel,
         blockedCharactersByActor: state.blockedCharactersByActor || {}
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1466,11 +1504,24 @@
           if (parsed.universeMemberships && typeof parsed.universeMemberships === 'object') {
             state.universeMemberships = normalizeUniverseMemberships(parsed.universeMemberships);
           }
+          if (parsed.audioLibrary && typeof parsed.audioLibrary === 'object') {
+            state.audioLibrary = normalizeAudioLibrary({
+              ...parsed.audioLibrary,
+              ...(parsed.mezclas && typeof parsed.mezclas === 'object' ? { mezclas: parsed.mezclas } : {})
+            });
+          } else if (parsed.mezclas && typeof parsed.mezclas === 'object') {
+            state.audioLibrary = normalizeAudioLibrary({ ...state.audioLibrary, mezclas: parsed.mezclas });
+          }
+          if (parsed.collectionModel && typeof parsed.collectionModel === 'object') {
+            collectionModel = parseModelFromStorage(parsed.collectionModel) || collectionModel;
+          }
           if (parsed.blockedCharactersByActor && typeof parsed.blockedCharactersByActor === 'object') {
             state.blockedCharactersByActor = parsed.blockedCharactersByActor;
           }
         }
+        collectionModel.audioLibrary = normalizeAudioLibrary(state.audioLibrary || collectionModel.audioLibrary);
         saveVideos();
+        saveAudioLibrary();
         saveUniverseNodes();
         saveUniverseMemberships();
         saveBlockedCharacters();
@@ -1485,58 +1536,131 @@
 
 
     function normalizeAudioLibrary(rawAudioLibrary) {
-      const base = { voces: [], fondos: [] };
+      const base = createEmptyAudioLibrary();
       if (!rawAudioLibrary || typeof rawAudioLibrary !== 'object') return base;
 
-      const normalizeCategory = (value) => {
-        if (!Array.isArray(value)) return [];
-        return value
+      const now = Date.now();
+      const normalizeDateMs = (value, fallback = now) => {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+        const parsed = Date.parse(String(value || ''));
+        return Number.isNaN(parsed) ? fallback : parsed;
+      };
+      const normalizeCommonAudio = (item, fallbackCategory, index) => {
+        const path = String(item.path || item.storagePath || '').trim();
+        const url = String(item.url || item.downloadURL || '').trim();
+        const createdAt = normalizeDateMs(item.createdAt, now);
+        const normalized = {
+          id: String(item.id || `audio-${fallbackCategory}-${now}-${index}-${Math.random().toString(16).slice(2)}`),
+          category: fallbackCategory,
+          name: String(item.name || item.nombre || 'Archivo sin nombre').trim() || 'Archivo sin nombre',
+          path,
+          url,
+          storagePath: String(item.storagePath || path).trim(),
+          downloadURL: String(item.downloadURL || url).trim(),
+          contentType: String(item.contentType || item.mimeType || 'audio/mpeg'),
+          size: Number(item.size) || 0,
+          createdAt
+        };
+        const updatedAt = normalizeDateMs(item.updatedAt, 0);
+        if (updatedAt) normalized.updatedAt = updatedAt;
+        const durationMs = Number(item.durationMs || item.duration);
+        if (Number.isFinite(durationMs) && durationMs >= 0) normalized.durationMs = durationMs;
+        return normalized;
+      };
+      const normalizeVoice = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'voces', index);
+        const characterId = String(item.characterId || item.assignedCharacterId || '').trim();
+        const characterName = String(item.characterName || item.personaje || '').trim();
+        if (characterId) normalized.characterId = characterId;
+        else if (characterName) normalized.characterName = characterName;
+        return normalized;
+      };
+      const normalizeBackground = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'fondos', index);
+        const universeIds = normalizeStringArray(item.universeIds || item.universesIds || item.universeId);
+        const universeNames = normalizeStringArray(item.universeNames || item.universes || item.universeName || item.universo, { normalize: true });
+        if (universeIds.length) normalized.universeIds = universeIds;
+        if (universeNames.length) normalized.universeNames = universeNames;
+        return normalized;
+      };
+      const normalizeMix = (item, index) => {
+        const normalized = normalizeCommonAudio(item, 'mezclas', index);
+        const mixParameters = {
+          ...(item.mixParameters && typeof item.mixParameters === 'object' ? item.mixParameters : {}),
+          ...(item.params && typeof item.params === 'object' ? item.params : {}),
+          ...(item.parameters && typeof item.parameters === 'object' ? item.parameters : {})
+        };
+        ['voiceVolume', 'backgroundVolume', 'backgroundStartOffsetSec', 'padMode'].forEach((key) => {
+          if (item[key] !== undefined && mixParameters[key] === undefined) mixParameters[key] = item[key];
+        });
+        return {
+          ...normalized,
+          voiceId: String(item.voiceId || item.vozId || '').trim(),
+          backgroundId: String(item.backgroundId || item.fondoId || '').trim(),
+          mixParameters,
+          assignedCharacterId: String(item.assignedCharacterId || item.characterId || '').trim()
+        };
+      };
+      const normalizeList = (value, mapper) => {
+        const looksLikeSingleAudioItem = value && typeof value === 'object'
+          && ['id', 'url', 'path', 'storagePath', 'downloadURL', 'voiceId', 'backgroundId'].some((key) => value[key] !== undefined);
+        const rows = Array.isArray(value)
+          ? value
+          : (looksLikeSingleAudioItem ? [value] : (value && typeof value === 'object' ? Object.entries(value).map(([id, item]) => ({ id, ...(item || {}) })) : []));
+        return rows
           .filter(item => item && typeof item === 'object')
-          .map((item) => ({
-            id: String(item.id || `audio-${Date.now()}-${Math.random().toString(16).slice(2)}`),
-            name: String(item.name || 'Archivo sin nombre'),
-            path: String(item.path || ''),
-            url: String(item.url || ''),
-            contentType: String(item.contentType || 'audio/mpeg'),
-            size: Number(item.size) || 0,
-            universeIds: [...new Set([
-              ...(Array.isArray(item.universeIds) ? item.universeIds : []),
-              item.universeId,
-              item.universoId
-            ].filter(Boolean).map(String))],
-            universeNames: [...new Set([
-              ...(Array.isArray(item.universeNames) ? item.universeNames : []),
-              ...(Array.isArray(item.universes) ? item.universes : []),
-              ...(Array.isArray(item.universos) ? item.universos : []),
-              ...(Array.isArray(item.universo) ? item.universo : []),
-              item.universeName,
-              item.universe,
-              Array.isArray(item.universo) ? '' : item.universo
-            ].filter(Boolean).map(String))],
-            universeName: String(item.universeName || item.universe || (Array.isArray(item.universo) ? '' : item.universo) || '').trim(),
-            createdAt: Number(item.createdAt) || Date.now()
-          }));
+          .map(mapper);
       };
 
       return {
-        voces: normalizeCategory(rawAudioLibrary.voces),
-        fondos: normalizeCategory(rawAudioLibrary.fondos)
+        voces: normalizeList(rawAudioLibrary.voces || rawAudioLibrary.voices, normalizeVoice),
+        fondos: normalizeList(rawAudioLibrary.fondos || rawAudioLibrary.backgrounds, normalizeBackground),
+        mezclas: normalizeList(rawAudioLibrary.mezclas || rawAudioLibrary.mixes || rawAudioLibrary.mix, normalizeMix)
       };
+    }
+
+    function normalizeCharacterMediaEntry(rawEntry) {
+      const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+      return {
+        imageUrls: Array.isArray(entry.imageUrls)
+          ? [...new Set(entry.imageUrls.map((url) => String(url || '').trim()).filter(Boolean))]
+          : [],
+        backgroundId: String(entry.backgroundId || ''),
+        mixUrl: String(entry.mixUrl || '')
+      };
+    }
+
+    function normalizeCharacterMediaMap(rawMap) {
+      if (!rawMap || typeof rawMap !== 'object') return {};
+      return Object.fromEntries(
+        Object.entries(rawMap)
+          .map(([characterId, entry]) => [String(characterId || '').trim(), normalizeCharacterMediaEntry(entry)])
+          .filter(([characterId]) => Boolean(characterId))
+      );
+    }
+
+    function ensureCollectionModelCharacterMedia(model = collectionModel) {
+      if (!model || typeof model !== 'object') return {};
+      model.characterMedia = normalizeCharacterMediaMap(model.characterMedia);
+      return model.characterMedia;
     }
 
     function loadAudioLibraryFromStorage() {
       try {
         const raw = localStorage.getItem(AUDIO_LIBRARY_STORAGE_KEY);
-        if (!raw) return normalizeAudioLibrary(null);
-        return normalizeAudioLibrary(JSON.parse(raw));
+        if (raw) return normalizeAudioLibrary(JSON.parse(raw));
       } catch (_) {
-        return normalizeAudioLibrary(null);
+        return normalizeAudioLibrary(collectionModel?.audioLibrary);
       }
+      return normalizeAudioLibrary(collectionModel?.audioLibrary);
     }
 
     function saveAudioLibrary() {
       const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
       state.audioLibrary = normalizedAudioLibrary;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
       collectionModel.audioLibrary = normalizedAudioLibrary;
       localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
@@ -1650,29 +1774,68 @@
     }
 
     async function handleAudioLibraryFileSelected(event, category, preferredName = '') {
-      const file = event.target?.files?.[0];
-      event.target.value = '';
-      if (!file) return;
+      const files = Array.from(event.target?.files || []);
+      if (event.target) event.target.value = '';
+      if (!files.length) return;
 
-      setAudioUploadStatus(category, { loading: true, error: '', success: '' });
-      try {
-        const metadata = await uploadAudioFileForCategory(file, category, preferredName);
+      const total = files.length;
+      const uploadedMetadata = [];
+      const uploadErrors = [];
+      const getUploadSummary = () => {
+        const errorSummary = uploadErrors.length ? ` · ${uploadErrors.length} con error` : '';
+        return `Total: ${total} · Subidos: ${uploadedMetadata.length}${errorSummary}`;
+      };
+      const getUploadErrorStatus = () => (
+        uploadErrors.length ? `${getUploadSummary()} · Errores: ${uploadErrors.join(' | ')}` : ''
+      );
+
+      setAudioUploadStatus(category, {
+        loading: true,
+        error: '',
+        success: `Preparando ${total} archivo${total === 1 ? '' : 's'} para subir...`
+      });
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const fileName = file?.name || `archivo ${index + 1}`;
+        setAudioUploadStatus(category, {
+          loading: true,
+          error: getUploadErrorStatus(),
+          success: `${getUploadSummary()} · Subiendo ${index + 1} de ${total}: "${fileName}"...`
+        });
+
+        try {
+          const displayName = total === 1 ? preferredName : '';
+          const metadata = await uploadAudioFileForCategory(file, category, displayName);
+          uploadedMetadata.push(metadata);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · "${metadata.name}" subido correctamente.`
+          });
+        } catch (err) {
+          uploadErrors.push(`"${fileName}": ${normalizeAudioUploadError(err)}`);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · Continuando con los archivos restantes...`
+          });
+        }
+      }
+
+      if (uploadedMetadata.length) {
         const current = Array.isArray(state.audioLibrary[category]) ? state.audioLibrary[category] : [];
-        state.audioLibrary[category] = [metadata, ...current]
+        state.audioLibrary[category] = [...uploadedMetadata, ...current]
           .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
         saveAudioLibrary();
-        setAudioUploadStatus(category, {
-          loading: false,
-          success: `Archivo "${metadata.name}" subido correctamente.`,
-          error: ''
-        });
-      } catch (err) {
-        setAudioUploadStatus(category, {
-          loading: false,
-          error: normalizeAudioUploadError(err),
-          success: ''
-        });
       }
+
+      const finalSummary = `Total: ${total} · Subidos correctamente: ${uploadedMetadata.length} · Errores: ${uploadErrors.length}`;
+      setAudioUploadStatus(category, {
+        loading: false,
+        error: uploadErrors.length ? `${finalSummary} · ${uploadErrors.join(' | ')}` : '',
+        success: uploadErrors.length ? '' : finalSummary
+      });
     }
 
     function hydrateModelWithFallback() {
@@ -2454,12 +2617,19 @@
           const parsedModel = parseModelFromStorage(data.collectionModel);
           if (parsedModel) {
             collectionModel = parsedModel;
-            ensureCollectionModelAudioLibrary(collectionModel);
+            state.audioLibrary = normalizeAudioLibrary(collectionModel.audioLibrary);
+            localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
             localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
           }
         }
         if (data.audioLibrary && typeof data.audioLibrary === 'object') {
-          collectionModel.audioLibrary = normalizeAudioLibrary(data.audioLibrary);
+          collectionModel.audioLibrary = normalizeAudioLibrary({
+            ...data.audioLibrary,
+            ...(data.mezclas && typeof data.mezclas === 'object' ? { mezclas: data.mezclas } : {})
+          });
+          localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
+        } else if (data.mezclas && typeof data.mezclas === 'object') {
+          collectionModel.audioLibrary = normalizeAudioLibrary({ ...collectionModel.audioLibrary, mezclas: data.mezclas });
           localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
         }
         if (data.blockedCharactersByActor && typeof data.blockedCharactersByActor === 'object') {
@@ -2467,12 +2637,19 @@
           localStorage.setItem(BLOCKED_CHARACTERS_STORAGE_KEY, JSON.stringify(state.blockedCharactersByActor));
         }
         if (data.audioLibrary && typeof data.audioLibrary === 'object') {
-          state.audioLibrary = normalizeAudioLibrary(data.audioLibrary);
+          state.audioLibrary = normalizeAudioLibrary({
+            ...data.audioLibrary,
+            ...(data.mezclas && typeof data.mezclas === 'object' ? { mezclas: data.mezclas } : {})
+          });
+          localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
+        } else if (data.mezclas && typeof data.mezclas === 'object') {
+          state.audioLibrary = normalizeAudioLibrary({ ...state.audioLibrary, mezclas: data.mezclas });
           localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
         }
         if (!collectionModel.videos.length && VIDEOS.length) {
           collectionModel = migrateLegacyVideosToModel(VIDEOS);
           ensureCollectionModelAudioLibrary(collectionModel);
+          ensureCollectionModelCharacterMedia(collectionModel);
           localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
         }
         buildAutoMarathonPlaylist();
@@ -2534,6 +2711,8 @@
       const normalizedAudioLibrary = normalizeAudioLibrary(state.audioLibrary);
       state.audioLibrary = normalizedAudioLibrary;
       collectionModel.audioLibrary = normalizedAudioLibrary;
+      collectionModel = parseModelFromStorage(collectionModel) || collectionModel;
+      collectionModel.audioLibrary = normalizedAudioLibrary;
       try {
         await firebaseDb.ref(CLOUD_STORAGE_PATH).set({
           updatedAt,
@@ -2542,6 +2721,7 @@
           videos: VIDEOS,
           collectionModel,
           audioLibrary: collectionModel.audioLibrary,
+          mezclas: collectionModel.audioLibrary.mezclas,
           blockedCharactersByActor: state.blockedCharactersByActor,
           favoriteUniverses: [...new Set(
             (state.universeNodes || [])
@@ -4910,6 +5090,67 @@
       feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
     }
 
+    function getCharacterModelRecordByProfileId(characterId) {
+      const profileId = String(characterId || '').trim();
+      if (!profileId) return null;
+      return (collectionModel.characters || []).find((character) => (
+        String(character.id || '') === profileId || getCharacterIdByName(character.name) === profileId
+      )) || null;
+    }
+
+    function getCharacterMedia(characterId) {
+      const profileId = String(characterId || '').trim();
+      const modelCharacter = getCharacterModelRecordByProfileId(profileId);
+      const modelId = String(modelCharacter?.id || '').trim();
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const media = normalizeCharacterMediaEntry(mediaMap[profileId] || mediaMap[modelId]);
+      mediaMap[profileId] = media;
+      if (modelId && modelId !== profileId) delete mediaMap[modelId];
+      return media;
+    }
+
+    function saveCharacterMedia(characterId, patch = {}) {
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const current = getCharacterMedia(characterId);
+      mediaMap[String(characterId || '').trim()] = normalizeCharacterMediaEntry({ ...current, ...patch });
+      saveCollectionModel();
+    }
+
+    function audioItemMatchesCharacter(audioItem, characterId) {
+      const itemCharacterId = String(audioItem?.characterId || '').trim();
+      if (!itemCharacterId) return false;
+      if (itemCharacterId === characterId) return true;
+      const modelCharacter = getCharacterModelRecordByProfileId(characterId);
+      if (modelCharacter?.id && itemCharacterId === modelCharacter.id) return true;
+      const characterName = getCharacterNameById(characterId);
+      return Boolean(characterName && getCharacterIdByName(characterName) === itemCharacterId);
+    }
+
+    function getUrlExtension(url, fallback = 'bin') {
+      try {
+        const pathname = new URL(url, window.location.href).pathname;
+        const match = pathname.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
+      } catch (_) {
+        const clean = String(url || '').split('?')[0];
+        const match = clean.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
+      }
+    }
+
+    function triggerFileDownload(url, filename) {
+      const cleanUrl = String(url || '').trim();
+      if (!cleanUrl) return;
+      const anchor = document.createElement('a');
+      anchor.href = cleanUrl;
+      anchor.download = filename || '';
+      anchor.target = '_blank';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+
     function getCharacterProfileData(characterId) {
       const characterName = getCharacterNameById(characterId);
       const characterEntries = VIDEOS.filter(v => getCharacterIdByName(v.personaje || '') === characterId);
@@ -5045,16 +5286,16 @@
         document.getElementById('backFromCharacterMissing')?.addEventListener('click', () => changeView('map'));
         return;
       }
-      const availableBackgrounds = getAvailableBackgroundsForCharacter(characterId);
-      const currentBackgroundId = getCharacterBackgroundId(characterName);
-      const selectedBackgroundId = availableBackgrounds.some((item) => String(item.id || '') === currentBackgroundId) ? currentBackgroundId : '';
-      const hasCharacterUniverses = universes.length > 0;
-      const backgroundSelectDisabled = !hasCharacterUniverses || !availableBackgrounds.length;
-      const backgroundHelpText = !hasCharacterUniverses
-        ? 'El selector está deshabilitado porque este personaje no tiene universos asociados.'
-        : !availableBackgrounds.length
-          ? 'No hay fondos asociados a los universos de este personaje.'
-          : 'Solo se listan fondos que comparten al menos un universo con este personaje.';
+      const characterMedia = getCharacterMedia(characterId);
+      const characterVoices = (Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [])
+        .filter((voice) => audioItemMatchesCharacter(voice, characterId));
+      const availableBackgrounds = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      const selectedBackgroundId = availableBackgrounds.some((background) => background.id === characterMedia.backgroundId)
+        ? characterMedia.backgroundId
+        : '';
+      if (selectedBackgroundId !== characterMedia.backgroundId) characterMedia.backgroundId = selectedBackgroundId;
+      const selectedBackground = availableBackgrounds.find((background) => background.id === selectedBackgroundId) || null;
+
       viewCharacterProfile.innerHTML = `
         <section class="hud-panel holo-card profile-layout">
           <div class="actions">
@@ -5078,14 +5319,41 @@
           </article>
           <article class="profile-section">
             <h4>Edición</h4>
-            <label>Fondo asociado
-              <select id="characterProfileBackgroundSelect" ${backgroundSelectDisabled ? 'disabled' : ''}>
-                <option value="">${backgroundSelectDisabled ? 'Sin fondos disponibles' : 'Sin fondo asignado'}</option>
-                ${availableBackgrounds.map((background) => `<option value="${escapeHtml(background.id)}" ${String(background.id || '') === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>`).join('')}
+            <div class="profile-edit-block">
+              <h5>Voces del personaje (${characterVoices.length})</h5>
+              <ul class="detail-list detail-list-soft">
+                ${characterVoices.map((voice) => `
+                  <li>
+                    ${escapeHtml(voice.name || 'Voz sin nombre')}
+                    ${voice.url ? ` · <a href="${escapeHtml(voice.url)}" target="_blank" rel="noopener">abrir</a>` : ''}
+                  </li>
+                `).join('') || '<li>Sin voces asignadas a este personaje.</li>'}
+              </ul>
+            </div>
+            <form id="characterImageUrlForm" class="profile-edit-block audio-upload-inline" style="align-items: flex-end;">
+              <label style="flex: 1;">URL de imagen
+                <input id="characterImageUrlInput" type="url" class="control-input" placeholder="https://..." autocomplete="off">
+              </label>
+              <button type="submit" class="neon-btn">Guardar imagen</button>
+            </form>
+            <ul class="detail-list detail-list-soft">
+              ${characterMedia.imageUrls.map((url, index) => `
+                <li>
+                  <a href="${escapeHtml(url)}" target="_blank" rel="noopener">Imagen ${index + 1}</a>
+                  <button type="button" class="neon-btn" data-delete-character-image="${index}">Eliminar</button>
+                </li>
+              `).join('') || '<li>Sin imágenes guardadas.</li>'}
+            </ul>
+            <label class="profile-edit-block">Fondo disponible
+              <select id="characterBackgroundSelect" class="control-input">
+                <option value="">Sin fondo asignado</option>
+                ${availableBackgrounds.map((background) => `
+                  <option value="${escapeHtml(background.id)}" ${background.id === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>
+                `).join('')}
               </select>
             </label>
-            <p class="muted">${escapeHtml(backgroundHelpText)}</p>
-            <div class="actions"><button id="saveCharacterBackground" class="neon-btn" ${backgroundSelectDisabled ? 'disabled' : ''}>Guardar fondo</button></div>
+            <p class="section-note">Fondo asignado: ${selectedBackground ? escapeHtml(selectedBackground.name || 'Fondo sin nombre') : 'ninguno'}.</p>
+            <div class="actions"><button id="downloadCharacterMedia" type="button" class="neon-btn neon-btn--primary">Descargar multimedia</button></div>
           </article>
           <article class="profile-section">
             <h4>Videos asociados (${videos.length})</h4>
@@ -5096,17 +5364,66 @@
         </section>
       `;
       document.getElementById('backFromCharacterProfile')?.addEventListener('click', () => changeView(state.universe ? 'universe' : 'map'));
-      document.getElementById('saveCharacterBackground')?.addEventListener('click', () => {
-        const nextBackgroundId = String(document.getElementById('characterProfileBackgroundSelect')?.value || '').trim();
-        const validBackgroundsForSelection = getAvailableBackgroundsForCharacter(characterId);
-        if (nextBackgroundId && !validBackgroundsForSelection.some((background) => String(background.id || '') === nextBackgroundId)) {
-          return setCharacterProfileFeedback('El fondo seleccionado no comparte universo con el personaje.', 'error');
+      document.getElementById('characterImageUrlForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = document.getElementById('characterImageUrlInput');
+        const imageUrl = String(input?.value || '').trim();
+        if (!imageUrl) return setCharacterProfileFeedback('Debes ingresar una URL de imagen.', 'error');
+        try {
+          new URL(imageUrl, window.location.href);
+        } catch (_) {
+          return setCharacterProfileFeedback('La URL de imagen no es válida.', 'error');
         }
-        setCharacterBackgroundId(characterName, nextBackgroundId);
-        saveVideos();
-        refreshDependentViews();
+        const nextImageUrls = [...new Set([...characterMedia.imageUrls, imageUrl])];
+        saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
         renderCharacterProfile(characterId);
-        setCharacterProfileFeedback(nextBackgroundId ? 'Fondo actualizado correctamente.' : 'Fondo removido correctamente.');
+        setCharacterProfileFeedback('Imagen guardada correctamente.');
+      });
+      viewCharacterProfile.querySelectorAll('[data-delete-character-image]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number(btn.dataset.deleteCharacterImage);
+          if (!Number.isInteger(index) || index < 0) return;
+          const nextImageUrls = characterMedia.imageUrls.filter((_, currentIndex) => currentIndex !== index);
+          saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
+          renderCharacterProfile(characterId);
+          setCharacterProfileFeedback('Imagen eliminada correctamente.');
+        });
+      });
+      document.getElementById('characterBackgroundSelect')?.addEventListener('change', (event) => {
+        const backgroundId = String(event.target?.value || '').trim();
+        saveCharacterMedia(characterId, { backgroundId });
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback(backgroundId ? 'Fondo asignado correctamente.' : 'Fondo desasignado correctamente.');
+      });
+      document.getElementById('downloadCharacterMedia')?.addEventListener('click', () => {
+        const safeCharacterName = cssSafe(characterName || 'personaje') || 'personaje';
+        let downloadCount = 0;
+        characterMedia.imageUrls.forEach((url, index) => {
+          const extension = getUrlExtension(url, 'jpg');
+          triggerFileDownload(url, `${safeCharacterName}-imagen-${index + 1}.${extension}`);
+          downloadCount += 1;
+        });
+        characterVoices.forEach((voice, index) => {
+          if (!voice.url) return;
+          const extension = getUrlExtension(voice.url, 'mp3');
+          const voiceName = cssSafe(voice.name || `voz-${index + 1}`) || `voz-${index + 1}`;
+          triggerFileDownload(voice.url, `${safeCharacterName}-${voiceName}.${extension}`);
+          downloadCount += 1;
+        });
+        if (selectedBackground?.url) {
+          const extension = getUrlExtension(selectedBackground.url, 'mp3');
+          const backgroundName = cssSafe(selectedBackground.name || 'fondo') || 'fondo';
+          triggerFileDownload(selectedBackground.url, `${safeCharacterName}-${backgroundName}.${extension}`);
+          downloadCount += 1;
+        }
+        if (characterMedia.mixUrl) {
+          const extension = getUrlExtension(characterMedia.mixUrl, 'wav');
+          triggerFileDownload(characterMedia.mixUrl, `${safeCharacterName}-mezcla.${extension}`);
+          downloadCount += 1;
+        }
+        setCharacterProfileFeedback(downloadCount
+          ? `Descarga iniciada para ${downloadCount} archivo(s).`
+          : 'No hay multimedia asignada para descargar.', downloadCount ? 'success' : 'error');
       });
       document.getElementById('addActorToCharacter')?.addEventListener('click', () => {
         const inputName = prompt(`Nombre del actor para ${characterName}:`, '');
@@ -7607,11 +7924,12 @@
 
       const renderAudioItems = (category) => {
         const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
+        const itemCategoryClass = category === 'voces' ? 'audio-library-item--voice' : 'audio-library-item--background';
         if (!items.length) return '<p class="muted">No hay archivos cargados aún.</p>';
         return `
           <ul class="audio-library-list">
             ${items.map((item) => `
-              <li class="audio-library-item">
+              <li class="audio-library-item ${itemCategoryClass}">
                 <div>
                   <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                   <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
@@ -7644,7 +7962,7 @@
                   <div class="audio-library-header">
                     <h3>${label}</h3>
                     <button type="button" class="neon-btn" data-audio-trigger="${key}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'SUBIENDO...' : buttonLabel}</button>
-                    <input type="file" accept="audio/*" data-audio-input="${key}" class="audio-library-input" hidden>
+                    <input type="file" accept="audio/*" multiple data-audio-input="${key}" class="audio-library-input" hidden>
                   </div>
                   <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
                   ${renderAudioItems(key)}
@@ -7705,6 +8023,7 @@
       const targetView = isVoces ? viewAudioVoces : viewAudioFondos;
       const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
       const status = state.uploadStatusByCategory?.[category] || { loading: false, error: '', success: '' };
+      const itemCategoryClass = isVoces ? 'audio-library-item--voice' : 'audio-library-item--background';
 
       targetView.innerHTML = `
         <section class="mock-shell">
@@ -7713,7 +8032,7 @@
           <div class="audio-upload-inline">
             <input type="text" class="control-input" data-audio-name-input="${category}" placeholder="Nombre para mostrar (opcional)">
             <button class="neon-btn toon-btn" data-audio-add-btn="${category}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'Subiendo...' : addLabel}</button>
-            <input type="file" accept="audio/*" data-audio-file-input="${category}" hidden>
+            <input type="file" accept="audio/*" multiple data-audio-file-input="${category}" hidden>
           </div>
           <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
           <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
@@ -7723,7 +8042,7 @@
           ${items.length ? `
             <ul class="audio-library-list">
               ${items.map((item) => `
-                <li class="audio-library-item">
+                <li class="audio-library-item ${itemCategoryClass}">
                   <div>
                     <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                     <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
