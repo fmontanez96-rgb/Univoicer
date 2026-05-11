@@ -7406,11 +7406,12 @@
 
       const renderAudioItems = (category) => {
         const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
+        const itemCategoryClass = category === 'voces' ? 'audio-library-item--voice' : 'audio-library-item--background';
         if (!items.length) return '<p class="muted">No hay archivos cargados aún.</p>';
         return `
           <ul class="audio-library-list">
             ${items.map((item) => `
-              <li class="audio-library-item">
+              <li class="audio-library-item ${itemCategoryClass}">
                 <div>
                   <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                   <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
@@ -7504,6 +7505,7 @@
       const targetView = isVoces ? viewAudioVoces : viewAudioFondos;
       const items = Array.isArray(state.audioLibrary?.[category]) ? state.audioLibrary[category] : [];
       const status = state.uploadStatusByCategory?.[category] || { loading: false, error: '', success: '' };
+      const itemCategoryClass = isVoces ? 'audio-library-item--voice' : 'audio-library-item--background';
 
       targetView.innerHTML = `
         <section class="mock-shell">
@@ -7522,7 +7524,7 @@
           ${items.length ? `
             <ul class="audio-library-list">
               ${items.map((item) => `
-                <li class="audio-library-item">
+                <li class="audio-library-item ${itemCategoryClass}">
                   <div>
                     <p class="audio-library-item-name">${escapeHtml(item.name || 'Archivo sin nombre')}</p>
                     <p class="audio-library-item-meta">${Math.max(1, Math.round((Number(item.size) || 0) / 1024))} KB · ${new Date(Number(item.createdAt) || Date.now()).toLocaleString('es-AR')}</p>
