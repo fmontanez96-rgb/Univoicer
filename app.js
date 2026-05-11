@@ -6911,6 +6911,7 @@
               </div>
               <div class="character-inline-editor__actions">
                 <button type="submit" class="neon-btn neon-btn--primary">Guardar cambios</button>
+                <button type="button" id="downloadCharacterMultimediaBtn" class="neon-btn">Descargar multimedia</button>
                 <button type="button" id="cancelCharacterEdit" class="neon-btn">Cancelar</button>
               </div>
               <p class="muted">Selecciona un actor o universo y el selector se cerrará automáticamente. Haz clic en una etiqueta para quitarla.</p>
@@ -6992,6 +6993,9 @@
         document.getElementById('cancelCharacterEdit')?.addEventListener('click', () => {
           state.showCharacterInlineEdit = false;
           renderIndiceView();
+        });
+        document.getElementById('downloadCharacterMultimediaBtn')?.addEventListener('click', () => {
+          downloadCharacterMultimedia(getCharacterIdByName(focusedCharacter) || focusedCharacter);
         });
         initializeCompactMultiSelects(viewIndice);
 
