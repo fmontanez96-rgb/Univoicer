@@ -4880,6 +4880,253 @@
       feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
     }
 
+    function setIndiceCharacterFeedback(message, type = 'success') {
+      const feedback = document.getElementById('indiceCharacterFeedback');
+      if (!feedback) return;
+      feedback.textContent = message || '';
+      feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
+    }
+
+    function getAudioLibraryItemUrl(item) {
+      return String(
+        item?.url
+        || item?.downloadURL
+        || item?.downloadUrl
+        || item?.href
+        || item?.src
+        || item?.fileUrl
+        || item?.audioUrl
+        || ''
+      ).trim();
+    }
+
+    function getAudioLibraryItemName(item, fallback = 'multimedia') {
+      return String(item?.name || item?.title || item?.filename || fallback).trim() || fallback;
+    }
+
+    function sanitizeDownloadFilename(name, fallback = 'univoicer-multimedia') {
+      const cleanName = String(name || fallback)
+        .trim()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return cleanName || fallback;
+    }
+
+    function guessFileExtensionFromUrl(url, contentType = '') {
+      const type = String(contentType || '').toLowerCase();
+      if (type.includes('png')) return 'png';
+      if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
+      if (type.includes('webp')) return 'webp';
+      if (type.includes('gif')) return 'gif';
+      if (type.includes('mpeg') || type.includes('mp3')) return 'mp3';
+      if (type.includes('wav')) return 'wav';
+      if (type.includes('ogg')) return 'ogg';
+      if (type.includes('mp4')) return 'mp4';
+      try {
+        const parsed = new URL(String(url || ''), window.location.href);
+        const extension = parsed.pathname.split('/').pop()?.split('.').pop()?.toLowerCase() || '';
+        return /^[a-z0-9]{2,5}$/.test(extension) ? extension : '';
+      } catch (_) {
+        return '';
+      }
+    }
+
+    function normalizeDownloadResource(resource, index) {
+      const url = String(resource?.url || '').trim();
+      const extension = guessFileExtensionFromUrl(url, resource?.contentType);
+      const baseName = sanitizeDownloadFilename(resource?.filename || resource?.label || `multimedia-${index + 1}`);
+      return {
+        ...resource,
+        url,
+        filename: extension && !baseName.toLowerCase().endsWith(`.${extension}`) ? `${baseName}.${extension}` : baseName
+      };
+    }
+
+    function addUniqueDownloadResource(resources, seenUrls, resource) {
+      const url = String(resource?.url || '').trim();
+      if (!url || seenUrls.has(url)) return;
+      seenUrls.add(url);
+      resources.push(resource);
+    }
+
+    function isPotentiallyAssignedToCharacter(item, characterId, characterName) {
+      const normalizedCharacterName = normalizeName(characterName || '');
+      const normalizedCharacterId = normalizeName(characterId || '');
+      const explicitValues = [
+        item?.characterId,
+        item?.personajeId,
+        item?.character_id,
+        item?.assignedCharacterId,
+        item?.assigned_character_id,
+        item?.characterName,
+        item?.personaje,
+        item?.assignedCharacter,
+        item?.assigned_character
+      ].map(value => normalizeName(value || '')).filter(Boolean);
+      if (explicitValues.some(value => value === normalizedCharacterId || value === normalizedCharacterName)) return true;
+
+      const listValues = [item?.characterIds, item?.personajeIds, item?.characters, item?.personajes]
+        .flatMap(value => Array.isArray(value) ? value : [])
+        .map(value => normalizeName(value?.id || value?.name || value || ''))
+        .filter(Boolean);
+      if (listValues.some(value => value === normalizedCharacterId || value === normalizedCharacterName)) return true;
+
+      const itemName = normalizeName(getAudioLibraryItemName(item, ''));
+      return Boolean(normalizedCharacterName && itemName.includes(normalizedCharacterName));
+    }
+
+    function collectAssignedAudioResources(items, characterId, characterName, kind) {
+      return (Array.isArray(items) ? items : [])
+        .filter((item) => isPotentiallyAssignedToCharacter(item, characterId, characterName))
+        .map((item) => ({
+          kind,
+          url: getAudioLibraryItemUrl(item),
+          label: `${kind}-${getAudioLibraryItemName(item, characterName)}`,
+          contentType: item?.contentType || item?.mimeType || item?.type || ''
+        }))
+        .filter((resource) => resource.url);
+    }
+
+    function collectAssignedMixResources(characterVideos, characterId, characterName) {
+      const mixCandidates = [];
+      const addMixCandidate = (source, labelPrefix = 'mezcla') => {
+        if (!source || typeof source !== 'object') return;
+        [
+          source.mezclaUrl,
+          source.mixUrl,
+          source.audioMixUrl,
+          source.mixedAudioUrl,
+          source.mezcla?.url,
+          source.mezcla?.downloadURL,
+          source.mix?.url,
+          source.mix?.downloadURL,
+          source.assignedMix?.url,
+          source.assignedMix?.downloadURL
+        ].forEach((url, index) => {
+          const cleanUrl = String(url || '').trim();
+          if (cleanUrl) {
+            mixCandidates.push({
+              kind: 'mezcla',
+              url: cleanUrl,
+              label: `${labelPrefix}-${source.personaje || source.name || characterName || index + 1}`,
+              contentType: source.mezcla?.contentType || source.mix?.contentType || source.assignedMix?.contentType || source.contentType || ''
+            });
+          }
+        });
+      };
+
+      characterVideos.forEach((video) => addMixCandidate(video, 'mezcla-video'));
+      collectionModel.characters
+        .filter((character) => normalizeName(character.id) === normalizeName(characterId) || normalizeName(character.name) === normalizeName(characterName))
+        .forEach((character) => addMixCandidate(character, 'mezcla-personaje'));
+      (Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [])
+        .filter((item) => isPotentiallyAssignedToCharacter(item, characterId, characterName))
+        .forEach((item) => {
+          const url = getAudioLibraryItemUrl(item);
+          if (url) {
+            mixCandidates.push({
+              kind: 'mezcla',
+              url,
+              label: `mezcla-${getAudioLibraryItemName(item, characterName)}`,
+              contentType: item?.contentType || item?.mimeType || item?.type || ''
+            });
+          }
+        });
+      return mixCandidates;
+    }
+
+    function collectCharacterImageResources(characterVideos, characterName) {
+      const imageCandidates = [];
+      const pushImage = (url, label, contentType = 'image/*') => {
+        const cleanUrl = String(url || '').trim();
+        if (cleanUrl) imageCandidates.push({ kind: 'imagen', url: cleanUrl, label, contentType });
+      };
+
+      characterVideos.forEach((video, index) => {
+        pushImage(video?.thumbnail, `imagen-${characterName}-${index + 1}`);
+        pushImage(video?.imageUrl || video?.imagen_url || video?.coverUrl || video?.portada_url, `imagen-extra-${characterName}-${index + 1}`);
+        const youtubeId = getYoutubeId(video?.url_youtube || video?.url_video || '');
+        if (youtubeId) pushImage(`https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`, `youtube-${characterName}-${index + 1}.jpg`, 'image/jpeg');
+      });
+      pushImage(getCharacterLockedAvatarUrl(characterName), `avatar-bloqueado-${characterName}`);
+
+      return imageCandidates;
+    }
+
+    function triggerResourceDownload(resource, index) {
+      const normalized = normalizeDownloadResource(resource, index);
+      if (!normalized.url) throw new Error('URL vacía');
+      if (!normalized.url.startsWith('data:') && !normalized.url.startsWith('blob:')) {
+        try {
+          new URL(normalized.url, window.location.href);
+        } catch (_) {
+          throw new Error('URL inválida');
+        }
+      }
+      const anchor = document.createElement('a');
+      anchor.href = normalized.url;
+      anchor.download = normalized.filename;
+      anchor.rel = 'noopener';
+      anchor.target = '_blank';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return normalized;
+    }
+
+    function downloadCharacterMultimedia(characterId) {
+      const characterName = getCharacterNameById(characterId) || String(characterId || '').trim();
+      if (!characterName) {
+        setIndiceCharacterFeedback('No se pudo identificar el personaje.', 'error');
+        setCharacterProfileFeedback('No se pudo identificar el personaje.', 'error');
+        return;
+      }
+
+      const normalizedCharacter = normalizeName(characterName);
+      const characterVideos = VIDEOS.filter((video) => normalizeName(video.personaje || '') === normalizedCharacter);
+      const resources = [];
+      const seenUrls = new Set();
+
+      collectCharacterImageResources(characterVideos, characterName)
+        .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
+
+      const mixResources = collectAssignedMixResources(characterVideos, characterId, characterName);
+      if (mixResources.length) {
+        mixResources.forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
+      } else {
+        collectAssignedAudioResources(state.audioLibrary?.voces, characterId, characterName, 'voz')
+          .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
+        collectAssignedAudioResources(state.audioLibrary?.fondos, characterId, characterName, 'fondo')
+          .forEach((resource) => addUniqueDownloadResource(resources, seenUrls, resource));
+      }
+
+      if (!resources.length) {
+        const message = 'No hay multimedia descargable para este personaje.';
+        setIndiceCharacterFeedback(message, 'error');
+        setCharacterProfileFeedback(message, 'error');
+        return;
+      }
+
+      const failed = [];
+      const downloaded = [];
+      resources.forEach((resource, index) => {
+        try {
+          downloaded.push(triggerResourceDownload(resource, index));
+        } catch (error) {
+          failed.push(`${resource.label || resource.kind || 'recurso'}: ${error?.message || 'no se pudo iniciar la descarga'}`);
+        }
+      });
+
+      const strategyNote = 'Estrategia simple: descargas individuales con <a download>. No se agrega ZIP para evitar dependencias externas.';
+      const message = failed.length
+        ? `${strategyNote} Se iniciaron ${downloaded.length} descarga(s), pero fallaron ${failed.length}: ${failed.join('; ')}.`
+        : `${strategyNote} Se iniciaron ${downloaded.length} descarga(s) de multimedia.`;
+      setIndiceCharacterFeedback(message, failed.length ? 'error' : 'success');
+      setCharacterProfileFeedback(message, failed.length ? 'error' : 'success');
+    }
+
     function getCharacterProfileData(characterId) {
       const characterName = getCharacterNameById(characterId);
       const characterEntries = VIDEOS.filter(v => getCharacterIdByName(v.personaje || '') === characterId);
@@ -6065,6 +6312,7 @@
               </div>
               <div class="character-inline-editor__actions">
                 <button type="submit" class="neon-btn neon-btn--primary">Guardar cambios</button>
+                <button type="button" id="downloadCharacterMultimediaBtn" class="neon-btn">Descargar multimedia</button>
                 <button type="button" id="cancelCharacterEdit" class="neon-btn">Cancelar</button>
               </div>
               <p class="muted">Selecciona un actor o universo y el selector se cerrará automáticamente. Haz clic en una etiqueta para quitarla.</p>
@@ -6122,6 +6370,9 @@
         document.getElementById('cancelCharacterEdit')?.addEventListener('click', () => {
           state.showCharacterInlineEdit = false;
           renderIndiceView();
+        });
+        document.getElementById('downloadCharacterMultimediaBtn')?.addEventListener('click', () => {
+          downloadCharacterMultimedia(getCharacterIdByName(focusedCharacter) || focusedCharacter);
         });
         initializeCompactMultiSelects(viewIndice);
 
