@@ -89,7 +89,9 @@
       uploadStatusByCategory: {
         voces: { loading: false, error: '', success: '' },
         fondos: { loading: false, error: '', success: '' }
-      }
+      },
+      showUniverseBackgroundsPanel: false,
+      universeBackgroundFeedback: { type: '', text: '' }
     };
     const UNIVERSES_STORAGE_KEY = 'universes_map_v1';
     const VIDEOS_STORAGE_KEY = 'videos_collection_v1';
@@ -428,12 +430,21 @@
       const updatedAt = normalizeAudioTimestamp(rawItem.updatedAt, createdAt);
       const parsedDurationMs = Number(rawItem.durationMs);
 
+      const universeIds = Array.isArray(rawItem.universeIds)
+        ? [...new Set(rawItem.universeIds.map((id) => String(id || '').trim()).filter(Boolean))]
+        : [];
+
       return {
         id: String(rawItem.id || `audio-${validCategory}-${Date.now()}-${index}`),
         category: validCategory,
         name: String(rawItem.name || '').trim(),
-        storagePath: String(rawItem.storagePath || '').trim(),
-        downloadURL: String(rawItem.downloadURL || '').trim(),
+        path: String(rawItem.path || rawItem.storagePath || '').trim(),
+        storagePath: String(rawItem.storagePath || rawItem.path || '').trim(),
+        url: String(rawItem.url || rawItem.downloadURL || '').trim(),
+        downloadURL: String(rawItem.downloadURL || rawItem.url || '').trim(),
+        contentType: String(rawItem.contentType || '').trim(),
+        size: Number.isFinite(Number(rawItem.size)) && Number(rawItem.size) >= 0 ? Number(rawItem.size) : 0,
+        universeIds,
         ...(Number.isFinite(parsedDurationMs) && parsedDurationMs >= 0 ? { durationMs: parsedDurationMs } : {}),
         createdAt,
         updatedAt
@@ -1511,6 +1522,128 @@
       localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
       localStorage.setItem(AUDIO_LIBRARY_STORAGE_KEY, JSON.stringify(state.audioLibrary));
       scheduleCloudSync();
+    }
+
+
+    function getUniverseAudioAssociationId(universeName = state.universe) {
+      const normalizedUniverseName = normalizeUniverseName(universeName || '');
+      const node = state.universeNodes.find((item) => normalizeUniverseName(item.name || '') === normalizedUniverseName);
+      return String(node?.id || normalizedUniverseName || universeName || '').trim();
+    }
+
+    function getUniverseAssociatedBackgrounds(universeName = state.universe) {
+      const associationId = getUniverseAudioAssociationId(universeName);
+      if (!associationId) return [];
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      return fondos.filter((background) => (
+        Array.isArray(background.universeIds)
+        && background.universeIds.some((id) => String(id || '') === associationId)
+      ));
+    }
+
+    function setUniverseBackgroundFeedback(type, text) {
+      state.universeBackgroundFeedback = {
+        type: type === 'success' ? 'success' : type === 'error' ? 'error' : '',
+        text: String(text || '')
+      };
+      if (state.view === 'universe') renderUniverseView();
+    }
+
+    function saveUniverseBackgroundAssociations(selectedBackgroundIds) {
+      const associationId = getUniverseAudioAssociationId();
+      if (!associationId) throw new Error('No se pudo identificar el universo actual.');
+      const selectedIds = new Set((Array.isArray(selectedBackgroundIds) ? selectedBackgroundIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean));
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      state.audioLibrary.fondos = fondos.map((background) => {
+        const currentUniverseIds = Array.isArray(background.universeIds)
+          ? background.universeIds.map((id) => String(id || '').trim()).filter(Boolean)
+          : [];
+        const nextUniverseIds = new Set(currentUniverseIds.filter((id) => id !== associationId));
+        if (selectedIds.has(String(background.id || ''))) nextUniverseIds.add(associationId);
+        return {
+          ...background,
+          universeIds: [...nextUniverseIds],
+          updatedAt: Date.now()
+        };
+      });
+      saveAudioLibrary();
+      state.showUniverseBackgroundsPanel = true;
+      state.universeBackgroundFeedback = {
+        type: 'success',
+        text: selectedIds.size
+          ? `${selectedIds.size} fondo${selectedIds.size === 1 ? '' : 's'} asociado${selectedIds.size === 1 ? '' : 's'} al universo.`
+          : 'Se quitaron los fondos asociados a este universo.'
+      };
+    }
+
+    function openUniverseBackgroundSelectorModal() {
+      const associationId = getUniverseAudioAssociationId();
+      const fondos = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      if (!associationId) {
+        setUniverseBackgroundFeedback('error', 'No se pudo identificar el universo actual.');
+        return;
+      }
+      if (!fondos.length) {
+        setUniverseBackgroundFeedback('error', 'No hay fondos cargados en la biblioteca de audio.');
+        return;
+      }
+      const selectedIds = new Set(getUniverseAssociatedBackgrounds().map((background) => String(background.id || '')));
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.innerHTML = `
+        <article class="detail-content universe-background-modal">
+          <button type="button" class="detail-close neon-btn" id="closeUniverseBackgroundSelector">✕ Cerrar</button>
+          <h3 class="section-title">Designar fondos para ${escapeHtml(state.universe || 'este universo')}</h3>
+          <p class="muted">Selecciona uno o varios fondos. La asociación se guarda en <code>background.universeIds</code>.</p>
+          <form id="universeBackgroundSelectorForm" class="universe-background-selector">
+            <div class="universe-background-options">
+              ${fondos.map((background) => {
+                const id = String(background.id || '');
+                return `
+                  <label class="universe-background-option">
+                    <input type="checkbox" name="backgroundIds" value="${escapeHtml(id)}" ${selectedIds.has(id) ? 'checked' : ''}>
+                    <span>
+                      <strong>${escapeHtml(background.name || 'Fondo sin nombre')}</strong>
+                      <small>${escapeHtml(background.contentType || 'audio')} · ${Math.max(0, Math.round((Number(background.size) || 0) / 1024))} KB</small>
+                    </span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+            <p class="audio-library-feedback" aria-live="polite" data-universe-background-modal-feedback></p>
+            <div class="actions">
+              <button type="submit" class="neon-btn neon-btn--primary">Guardar asociación</button>
+              <button type="button" class="neon-btn" id="cancelUniverseBackgroundSelector">Cancelar</button>
+            </div>
+          </form>
+        </article>
+      `;
+      const closeModal = () => modal.remove();
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+      });
+      document.body.appendChild(modal);
+      modal.querySelector('#closeUniverseBackgroundSelector')?.addEventListener('click', closeModal);
+      modal.querySelector('#cancelUniverseBackgroundSelector')?.addEventListener('click', closeModal);
+      modal.querySelector('#universeBackgroundSelectorForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const feedbackEl = modal.querySelector('[data-universe-background-modal-feedback]');
+        try {
+          const formData = new FormData(event.currentTarget);
+          saveUniverseBackgroundAssociations(formData.getAll('backgroundIds'));
+          closeModal();
+          renderUniverseView();
+        } catch (err) {
+          if (feedbackEl) {
+            feedbackEl.textContent = err.message || 'No se pudieron guardar las asociaciones.';
+            feedbackEl.classList.add('is-error');
+          }
+        }
+      });
     }
 
     function setAudioUploadStatus(category, patch) {
@@ -4002,6 +4135,11 @@
       const progressVisual = getProgressVisual(universeData.completion);
       const editFeedbackText = state.editUniverseFeedback?.text || '';
       const editFeedbackClass = state.editUniverseFeedback?.type === 'success' ? 'is-success' : '';
+      const associatedBackgrounds = getUniverseAssociatedBackgrounds();
+      const universeBackgroundFeedbackText = state.universeBackgroundFeedback?.text || '';
+      const universeBackgroundFeedbackClass = state.universeBackgroundFeedback?.type === 'success'
+        ? 'is-success'
+        : state.universeBackgroundFeedback?.type === 'error' ? 'is-error' : '';
       viewUniverse.innerHTML = `
         <div class="actions universe-view-animated">
           <button id="backMap" class="neon-btn">← Volver al mapa</button>
@@ -4028,6 +4166,16 @@
               ${universeNode?.isFavorite ? '⭐' : '☆'}
             </button>
 
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+              <button
+                id="toggleUniverseBackgrounds"
+                class="neon-btn neon-action icon-only"
+                aria-expanded="${state.showUniverseBackgroundsPanel ? 'true' : 'false'}"
+                title="Fondos del universo"
+              >🎵</button>
+              <button id="openUniverseBackgroundSelector" class="neon-btn neon-action" title="Designar fondos del universo">Designar fondo</button>
+            </div>
+
             <div style="display: flex; gap: 10px;">
               <button
                 id="toggleEditUniverseForm"
@@ -4049,6 +4197,27 @@
               </button>
             </div>
           </div>
+          ${state.showUniverseBackgroundsPanel ? `
+            <section class="hud-panel universe-background-panel">
+              <div class="universe-background-panel__head">
+                <h3>Fondos asociados</h3>
+                <button type="button" id="openUniverseBackgroundSelectorFromPanel" class="neon-btn neon-action">Designar fondo</button>
+              </div>
+              ${associatedBackgrounds.length ? `
+                <ul class="universe-background-list">
+                  ${associatedBackgrounds.map((background) => `
+                    <li>
+                      <span>${escapeHtml(background.name || 'Fondo sin nombre')}</span>
+                      ${background.url ? `<audio controls preload="none" src="${escapeHtml(background.url)}" aria-label="Reproducir ${escapeHtml(background.name || 'fondo')}"></audio>` : '<small class="muted">Sin URL de reproducción</small>'}
+                    </li>
+                  `).join('')}
+                </ul>
+              ` : '<p class="muted">Este universo todavía no tiene fondos asociados.</p>'}
+              <p class="audio-library-feedback ${universeBackgroundFeedbackClass}" aria-live="polite">${escapeHtml(universeBackgroundFeedbackText)}</p>
+            </section>
+          ` : universeBackgroundFeedbackText ? `
+            <p class="audio-library-feedback universe-background-feedback ${universeBackgroundFeedbackClass}" aria-live="polite">${escapeHtml(universeBackgroundFeedbackText)}</p>
+          ` : ''}
           ${state.showEditUniverseForm ? `
             <section class="hud-panel universe-edit-panel">
               <form id="editUniverseForm" class="universe-edit-form">
@@ -4191,6 +4360,12 @@
       const btnToggleVideo = document.getElementById('btn-toggle-video');
       const btnAddBlockedCharacter = document.getElementById('btn-add-blocked-character');
       const formAgregarVideo = document.getElementById('form-agregar-video');
+      document.getElementById('toggleUniverseBackgrounds')?.addEventListener('click', () => {
+        state.showUniverseBackgroundsPanel = !state.showUniverseBackgroundsPanel;
+        renderUniverseView();
+      });
+      document.getElementById('openUniverseBackgroundSelector')?.addEventListener('click', openUniverseBackgroundSelectorModal);
+      document.getElementById('openUniverseBackgroundSelectorFromPanel')?.addEventListener('click', openUniverseBackgroundSelectorModal);
       const videoCharacterInput = formAgregarVideo?.querySelector('[name="personaje_label"]');
       const videoActorCatalog = formAgregarVideo?.querySelector('#videoActorCatalog');
       btnToggleVideo?.addEventListener('click', () => {

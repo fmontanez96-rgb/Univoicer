@@ -4836,3 +4836,86 @@
     grid-template-columns: 1fr;
   }
 }
+
+.universe-background-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+  max-width: 560px;
+  margin-left: auto;
+}
+
+.universe-background-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.universe-background-panel__head h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.universe-background-list,
+.universe-background-options {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.universe-background-list li,
+.universe-background-option {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(125, 223, 255, .28);
+  border-radius: 14px;
+  background: rgba(6, 18, 42, .48);
+}
+
+.universe-background-list audio {
+  width: min(100%, 380px);
+}
+
+.universe-background-feedback {
+  text-align: right;
+}
+
+.universe-background-modal {
+  width: min(720px, 100%);
+}
+
+.universe-background-selector {
+  display: grid;
+  gap: 12px;
+}
+
+.universe-background-options {
+  max-height: min(420px, 55vh);
+  overflow: auto;
+}
+
+.universe-background-option {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  cursor: pointer;
+}
+
+.universe-background-option input {
+  margin-top: 4px;
+}
+
+.universe-background-option span,
+.universe-background-option small {
+  display: grid;
+  gap: 3px;
+}
+
+.universe-background-option small {
+  color: rgba(220, 237, 255, .72);
+}
