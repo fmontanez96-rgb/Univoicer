@@ -74,7 +74,8 @@
       showInteruniversalConnections: false,
       audioLibrary: {
         voces: [],
-        fondos: []
+        fondos: [],
+        mezclas: []
       },
       audioMixer: {
         voiceId: '',
@@ -402,7 +403,8 @@
     function createEmptyAudioLibrary() {
       return {
         voces: [],
-        fondos: []
+        fondos: [],
+        mezclas: []
       };
     }
 
@@ -421,7 +423,7 @@
 
     function normalizeAudioLibraryItem(rawItem, fallbackCategory, index) {
       if (!rawItem || typeof rawItem !== 'object') return null;
-      const validCategory = rawItem.category === 'voces' || rawItem.category === 'fondos'
+      const validCategory = ['voces', 'fondos', 'mezclas'].includes(rawItem.category)
         ? rawItem.category
         : fallbackCategory;
       const createdAt = normalizeAudioTimestamp(rawItem.createdAt, new Date().toISOString());
@@ -432,8 +434,12 @@
         id: String(rawItem.id || `audio-${validCategory}-${Date.now()}-${index}`),
         category: validCategory,
         name: String(rawItem.name || '').trim(),
-        storagePath: String(rawItem.storagePath || '').trim(),
-        downloadURL: String(rawItem.downloadURL || '').trim(),
+        storagePath: String(rawItem.storagePath || rawItem.path || '').trim(),
+        downloadURL: String(rawItem.downloadURL || rawItem.url || '').trim(),
+        path: String(rawItem.path || rawItem.storagePath || '').trim(),
+        url: String(rawItem.url || rawItem.downloadURL || '').trim(),
+        contentType: String(rawItem.contentType || 'audio/mpeg'),
+        size: Number(rawItem.size) || 0,
         ...(Number.isFinite(parsedDurationMs) && parsedDurationMs >= 0 ? { durationMs: parsedDurationMs } : {}),
         createdAt,
         updatedAt
@@ -452,7 +458,8 @@
 
       return {
         voces: normalizeCategoryList(rawAudioLibrary.voces, 'voces'),
-        fondos: normalizeCategoryList(rawAudioLibrary.fondos, 'fondos')
+        fondos: normalizeCategoryList(rawAudioLibrary.fondos, 'fondos'),
+        mezclas: normalizeCategoryList(rawAudioLibrary.mezclas, 'mezclas')
       };
     }
 
@@ -486,7 +493,8 @@
           actorIds: Array.isArray(item.actorIds) ? [...new Set(item.actorIds.filter(Boolean).map(String))] : [],
           universeIds: Array.isArray(item.universeIds) ? [...new Set(item.universeIds.filter(Boolean).map(String))] : [],
           videoIds: Array.isArray(item.videoIds) ? [...new Set(item.videoIds.filter(Boolean).map(String))] : [],
-          unlocked: Boolean(item.unlocked)
+          unlocked: Boolean(item.unlocked),
+          assignedMixAudioId: String(item.assignedMixAudioId || '')
         })),
         universes: rawModel.universes.filter(Boolean).map(item => ({
           id: String(item.id || ''),
@@ -547,7 +555,7 @@
     function getOrCreateCharacter(model, characterName, characterMap) {
       const normalized = normalizeEntityName(characterName || 'Sin personaje');
       if (characterMap.has(normalized)) return characterMap.get(normalized);
-      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false };
+      const character = { id: createModelId('character', normalized), name: (characterName || 'Sin personaje').trim() || 'Sin personaje', actorIds: [], universeIds: [], videoIds: [], unlocked: false, assignedMixAudioId: '' };
       model.characters.push(character);
       characterMap.set(normalized, character);
       return character;
@@ -1470,27 +1478,35 @@
 
 
     function normalizeAudioLibrary(rawAudioLibrary) {
-      const base = { voces: [], fondos: [] };
+      const base = { voces: [], fondos: [], mezclas: [] };
       if (!rawAudioLibrary || typeof rawAudioLibrary !== 'object') return base;
 
-      const normalizeCategory = (value) => {
+      const normalizeCategory = (value, fallbackCategory) => {
         if (!Array.isArray(value)) return [];
         return value
           .filter(item => item && typeof item === 'object')
           .map((item) => ({
             id: String(item.id || `audio-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+            category: String(item.category || fallbackCategory),
             name: String(item.name || 'Archivo sin nombre'),
-            path: String(item.path || ''),
-            url: String(item.url || ''),
+            path: String(item.path || item.storagePath || ''),
+            storagePath: String(item.storagePath || item.path || ''),
+            url: String(item.url || item.downloadURL || ''),
+            downloadURL: String(item.downloadURL || item.url || ''),
             contentType: String(item.contentType || 'audio/mpeg'),
             size: Number(item.size) || 0,
-            createdAt: Number(item.createdAt) || Date.now()
+            durationMs: Number(item.durationMs) || 0,
+            voiceAudioId: String(item.voiceAudioId || ''),
+            backgroundAudioId: String(item.backgroundAudioId || ''),
+            createdAt: Number(item.createdAt) || Date.now(),
+            updatedAt: Number(item.updatedAt) || Number(item.createdAt) || Date.now()
           }));
       };
 
       return {
-        voces: normalizeCategory(rawAudioLibrary.voces),
-        fondos: normalizeCategory(rawAudioLibrary.fondos)
+        voces: normalizeCategory(rawAudioLibrary.voces, 'voces'),
+        fondos: normalizeCategory(rawAudioLibrary.fondos, 'fondos'),
+        mezclas: normalizeCategory(rawAudioLibrary.mezclas, 'mezclas')
       };
     }
 
@@ -1900,6 +1916,153 @@
       return audioContext.decodeAudioData(fileBytes.slice(0));
     }
 
+
+
+    function getAudioItemUrl(item) {
+      return String(item?.url || item?.downloadURL || '').trim();
+    }
+
+    function getAudioLibraryMixById(mixAudioId) {
+      const id = String(mixAudioId || '').trim();
+      if (!id) return null;
+      return (Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [])
+        .find((item) => item.id === id) || null;
+    }
+
+    function getCharacterById(characterId) {
+      const id = String(characterId || '').trim();
+      if (!id) return null;
+      return (collectionModel.characters || []).find((character) => character.id === id) || null;
+    }
+
+    function getAssignedMixForCharacterId(characterId) {
+      const character = getCharacterById(characterId);
+      return getAudioLibraryMixById(character?.assignedMixAudioId || '');
+    }
+
+    async function downloadUrlAsFile(url, fileName) {
+      const cleanUrl = String(url || '').trim();
+      if (!cleanUrl) throw new Error('No hay URL descargable para este audio.');
+      try {
+        const response = await fetch(cleanUrl);
+        if (!response.ok) throw new Error('No se pudo descargar el archivo.');
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = fileName || 'univoicer-audio.wav';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      } catch (err) {
+        const anchor = document.createElement('a');
+        anchor.href = cleanUrl;
+        anchor.download = fileName || 'univoicer-audio.wav';
+        anchor.target = '_blank';
+        anchor.rel = 'noopener';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+    }
+
+    async function downloadCharacterMultimedia(characterId) {
+      const character = getCharacterById(characterId);
+      if (!character) throw new Error('No encontramos el personaje seleccionado.');
+      const assignedMix = getAssignedMixForCharacterId(character.id);
+      if (assignedMix) {
+        const url = getAudioItemUrl(assignedMix);
+        if (!url) throw new Error('La mezcla asignada no tiene URL descargable.');
+        await downloadUrlAsFile(url, `${cssSafe(character.name || 'personaje')}-mezcla.wav`);
+        return `Descargando mezcla asignada: ${assignedMix.name || 'Mezcla'}.`;
+      }
+      throw new Error('Este personaje todavía no tiene una mezcla asignada para descargar.');
+    }
+
+    async function uploadMixedAudioBlob(blob, { voiceItem, backgroundItem } = {}) {
+      if (!firebaseStorage) throw new Error('Firebase Storage no está disponible en esta sesión.');
+      const uniqueId = `mix-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const name = `Mezcla ${voiceItem?.name || 'voz'} + ${backgroundItem?.name || 'fondo'}`;
+      const path = `audioLibrary/mezclas/${uniqueId}.wav`;
+      const ref = firebaseStorage.ref(path);
+      const uploadTask = ref.put(blob, {
+        contentType: 'audio/wav',
+        customMetadata: {
+          category: 'mezclas',
+          voiceAudioId: String(voiceItem?.id || ''),
+          backgroundAudioId: String(backgroundItem?.id || '')
+        }
+      });
+      const snapshot = await uploadWithTimeout(uploadTask, 30000);
+      const url = await snapshot.ref.getDownloadURL();
+      const metadata = {
+        id: uniqueId,
+        category: 'mezclas',
+        name,
+        path,
+        storagePath: path,
+        url,
+        downloadURL: url,
+        contentType: 'audio/wav',
+        size: Number(blob.size) || 0,
+        voiceAudioId: String(voiceItem?.id || ''),
+        backgroundAudioId: String(backgroundItem?.id || ''),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      const current = Array.isArray(state.audioLibrary?.mezclas) ? state.audioLibrary.mezclas : [];
+      state.audioLibrary.mezclas = [metadata, ...current]
+        .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+      saveAudioLibrary();
+      return metadata;
+    }
+
+    function openAssignMixToCharacterModal(mixMetadata, { onAssigned } = {}) {
+      const characters = [...(collectionModel.characters || [])]
+        .filter((character) => character?.id && character?.name)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'es', { sensitivity: 'base' }));
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content">
+          <h3 class="section-title">Asignar mezcla a personaje</h3>
+          <p class="muted">Selecciona el personaje que usará <strong>${escapeHtml(mixMetadata?.name || 'la mezcla')}</strong> como multimedia descargable.</p>
+          <label>Personaje
+            <select class="control-input" data-mix-character-select>
+              <option value="">Selecciona un personaje</option>
+              ${characters.map((character) => `<option value="${escapeHtml(character.id)}">${escapeHtml(character.name)}</option>`).join('')}
+            </select>
+          </label>
+          <p class="audio-library-feedback" aria-live="polite" data-mix-character-feedback></p>
+          <div class="actions">
+            <button type="button" class="neon-btn neon-btn--primary" data-confirm-mix-character>Confirmar</button>
+            <button type="button" class="neon-btn" data-cancel-mix-character>Cancelar</button>
+          </div>
+        </article>
+      `;
+      document.body.appendChild(modal);
+      const close = () => modal.remove();
+      modal.querySelector('[data-cancel-mix-character]')?.addEventListener('click', close);
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) close();
+      });
+      modal.querySelector('[data-confirm-mix-character]')?.addEventListener('click', () => {
+        const select = modal.querySelector('[data-mix-character-select]');
+        const feedback = modal.querySelector('[data-mix-character-feedback]');
+        const characterId = String(select?.value || '').trim();
+        const character = getCharacterById(characterId);
+        if (!character) {
+          if (feedback) feedback.textContent = 'Debes seleccionar un personaje.';
+          return;
+        }
+        character.assignedMixAudioId = String(mixMetadata?.id || '');
+        saveCollectionModel();
+        if (typeof onAssigned === 'function') onAssigned(character, mixMetadata);
+        close();
+      });
+    }
+
     function drawAudioMixerBackgroundMarker(canvas, markerSeconds, maxDuration) {
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -1923,7 +2086,8 @@
       backgroundBuffer,
       voiceVolume = 1,
       backgroundVolume = 0.6,
-      backgroundOffset = 0
+      backgroundOffset = 0,
+      backgroundPadMode = 'none'
     }) {
       const safeVoiceDuration = Math.max(0.01, Number(voiceBuffer?.duration) || 0.01);
       const sampleRate = voiceBuffer?.sampleRate || backgroundBuffer?.sampleRate || 44100;
@@ -1953,8 +2117,12 @@
         const safeOffset = Math.max(0, Number(backgroundOffset) || 0);
         const availableDuration = Math.max(0, backgroundBuffer.duration - safeOffset);
         const bgDuration = Math.min(safeVoiceDuration, availableDuration);
+        const normalizedPadMode = String(backgroundPadMode || 'none').toLowerCase();
+        const bgStartAt = normalizedPadMode === 'padstart' && bgDuration < safeVoiceDuration
+          ? safeVoiceDuration - bgDuration
+          : 0;
         if (bgDuration > 0) {
-          bgSource.start(0, safeOffset, bgDuration);
+          bgSource.start(bgStartAt, safeOffset, bgDuration);
         }
       }
 
@@ -4896,6 +5064,7 @@
 
     function renderCharacterProfile(characterId) {
       const { characterName, videos, actors, universes, blockedActors, status } = getCharacterProfileData(characterId);
+      const assignedMix = getAssignedMixForCharacterId(characterId);
       if (!characterName) {
         viewCharacterProfile.innerHTML = `
           <section class="mock-shell">
@@ -4934,9 +5103,22 @@
               ${videos.map(item => `<li>${item.titulo || 'Sin título'} · ${item.actor_de_doblaje || 'Sin actor'} · ${(getVideoUniverses(item).join(', ') || 'Sin universo')}</li>`).join('') || '<li>Sin videos asociados.</li>'}
             </ul>
           </article>
+          <article class="profile-section">
+            <h4>Multimedia asignada</h4>
+            <p class="muted">${assignedMix ? `Mezcla asignada: ${escapeHtml(assignedMix.name || 'Mezcla sin nombre')}.` : 'Sin mezcla asignada.'}</p>
+            <div class="actions"><button id="downloadCharacterMultimediaBtn" class="neon-btn" ${assignedMix ? '' : 'disabled'}>Descargar multimedia</button></div>
+          </article>
         </section>
       `;
       document.getElementById('backFromCharacterProfile')?.addEventListener('click', () => changeView(state.universe ? 'universe' : 'map'));
+      document.getElementById('downloadCharacterMultimediaBtn')?.addEventListener('click', async () => {
+        try {
+          const message = await downloadCharacterMultimedia(characterId);
+          setCharacterProfileFeedback(message);
+        } catch (err) {
+          setCharacterProfileFeedback(err?.message || 'No se pudo descargar la multimedia.', 'error');
+        }
+      });
       document.getElementById('addActorToCharacter')?.addEventListener('click', () => {
         const inputName = prompt(`Nombre del actor para ${characterName}:`, '');
         if (inputName === null) return;
@@ -5977,6 +6159,10 @@
         const profileImage = !isCharacterLocked && unlockedActors.length > 0 && unlockedActors[0].video
           ? getVideoThumbnail(unlockedActors[0].video)
           : createPlaceholderCover(focusedCharacter);
+        const focusedCharacterModel = (collectionModel.characters || [])
+          .find((character) => normalizeName(character?.name || '') === normalizeName(focusedCharacter));
+        const focusedAssignedMix = getAssignedMixForCharacterId(focusedCharacterModel?.id || '');
+
         const profileAvatarMarkup = isCharacterLocked
           ? `
               <div
@@ -6078,6 +6264,14 @@
             </section>
 
             <article class="profile-section">
+              <h4 class="profile-section__title">📦 Multimedia del personaje</h4>
+              <p class="muted">${focusedAssignedMix ? `Mezcla asignada: ${escapeHtml(focusedAssignedMix.name || 'Mezcla sin nombre')}.` : 'Sin mezcla asignada.'}</p>
+              <div class="actions">
+                <button type="button" class="neon-btn toon-btn" data-download-character-multimedia ${focusedAssignedMix ? '' : 'disabled'}>Descargar multimedia</button>
+              </div>
+            </article>
+
+            <article class="profile-section">
               <h4 class="profile-section__title">🎙️ Actores de doblaje asignados (${actorCards.length})</h4>
               <section class="character-actors-grid">
                 ${actorCards.map(item => !item.isUnlocked
@@ -6110,6 +6304,22 @@
         document.getElementById('backToCharacterGallery')?.addEventListener('click', () => {
           state.indiceCharacterFocus = null;
           renderIndiceView();
+        });
+
+        viewIndice.querySelector('[data-download-character-multimedia]')?.addEventListener('click', async () => {
+          const feedback = document.getElementById('indiceCharacterFeedback');
+          try {
+            const message = await downloadCharacterMultimedia(focusedCharacterModel?.id || '');
+            if (feedback) {
+              feedback.style.color = '#9ff7c8';
+              feedback.textContent = message;
+            }
+          } catch (err) {
+            if (feedback) {
+              feedback.style.color = '#ffb6b6';
+              feedback.textContent = err?.message || 'No se pudo descargar la multimedia.';
+            }
+          }
         });
 
         // EDICIÓN AVANZADA
@@ -7580,7 +7790,7 @@
           <div class="audio-upload-inline">
             <button class="neon-btn toon-btn" data-audio-mixer-preview>Previsualizar</button>
             <button class="neon-btn toon-btn" data-audio-mixer-pause>Pausar</button>
-            <button class="neon-btn toon-btn" data-audio-mixer-generate>Generar mezcla</button>
+            <button class="neon-btn toon-btn" data-audio-mixer-save>Guardar</button>
             <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
           </div>
         </section>
@@ -7665,11 +7875,50 @@
         const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
         if (feedback) feedback.textContent = `Estado: En pausa · Posición: ${Number(state.audioMixer.previewPositionSec || 0).toFixed(1)}s`;
       });
-      viewAudioMixer.querySelector('[data-audio-mixer-generate]')?.addEventListener('click', () => {
+      viewAudioMixer.querySelector('[data-audio-mixer-save]')?.addEventListener('click', async (event) => {
         state.audioMixer.isPlaying = false;
         state.audioMixer.previewPositionSec = 0;
+        const saveBtn = event.currentTarget;
         const feedback = viewAudioMixer.querySelector('[data-audio-mixer-feedback]');
-        if (feedback) feedback.textContent = 'Mezcla generada (stub). Próximo paso: exportar archivo resultante.';
+        const voiceItem = voces.find((item) => item.id === state.audioMixer.voiceId);
+        const backgroundItem = fondos.find((item) => item.id === state.audioMixer.backgroundId);
+        if (!voiceItem || !getAudioItemUrl(voiceItem)) {
+          if (feedback) feedback.textContent = 'Selecciona una voz válida antes de guardar.';
+          return;
+        }
+        if (!backgroundItem || !getAudioItemUrl(backgroundItem)) {
+          if (feedback) feedback.textContent = 'Selecciona un fondo válido antes de guardar.';
+          return;
+        }
+        try {
+          if (saveBtn) saveBtn.disabled = true;
+          if (feedback) feedback.textContent = 'Generando mezcla final...';
+          const [voiceBuffer, backgroundBuffer] = await Promise.all([
+            decodeAudioBufferFromUrl(getAudioItemUrl(voiceItem)),
+            decodeAudioBufferFromUrl(getAudioItemUrl(backgroundItem))
+          ]);
+          const mixedBuffer = await createMixedAudioBuffer({
+            voiceBuffer,
+            backgroundBuffer,
+            voiceVolume: state.audioMixer.voiceVolume,
+            backgroundVolume: state.audioMixer.backgroundVolume,
+            backgroundOffset: state.audioMixer.backgroundStartOffsetSec,
+            backgroundPadMode: state.audioMixer.backgroundPadMode
+          });
+          const blob = audioBufferToWavBlob(mixedBuffer);
+          if (feedback) feedback.textContent = 'Subiendo mezcla a Firebase Storage...';
+          const mixMetadata = await uploadMixedAudioBlob(blob, { voiceItem, backgroundItem });
+          if (feedback) feedback.textContent = 'Mezcla guardada. Selecciona el personaje al que se asignará.';
+          openAssignMixToCharacterModal(mixMetadata, {
+            onAssigned: (character) => {
+              if (feedback) feedback.textContent = `Mezcla guardada y asignada a ${character.name}.`;
+            }
+          });
+        } catch (err) {
+          if (feedback) feedback.textContent = normalizeAudioUploadError(err);
+        } finally {
+          if (saveBtn) saveBtn.disabled = false;
+        }
       });
     }
 
