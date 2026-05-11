@@ -436,7 +436,13 @@
         downloadURL: String(rawItem.downloadURL || '').trim(),
         ...(Number.isFinite(parsedDurationMs) && parsedDurationMs >= 0 ? { durationMs: parsedDurationMs } : {}),
         createdAt,
-        updatedAt
+        updatedAt,
+        ...(validCategory === 'voces' ? { characterId: String(rawItem.characterId || '').trim() } : {}),
+        ...(validCategory === 'fondos' ? {
+          universeIds: Array.isArray(rawItem.universeIds)
+            ? [...new Set(rawItem.universeIds.filter(Boolean).map(String))]
+            : []
+        } : {})
       };
     }
 
@@ -1484,7 +1490,13 @@
             url: String(item.url || ''),
             contentType: String(item.contentType || 'audio/mpeg'),
             size: Number(item.size) || 0,
-            createdAt: Number(item.createdAt) || Date.now()
+            createdAt: Number(item.createdAt) || Date.now(),
+            ...(fallbackCategory === 'voces' ? { characterId: String(item.characterId || '').trim() } : {}),
+            ...(fallbackCategory === 'fondos' ? {
+              universeIds: Array.isArray(item.universeIds)
+                ? [...new Set(item.universeIds.filter(Boolean).map(String))]
+                : []
+            } : {})
           }));
       };
 
@@ -7530,6 +7542,7 @@
                   <audio controls preload="none" src="${escapeHtml(item.url || '')}" aria-label="Reproducir ${escapeHtml(item.name || 'audio')}"></audio>
                   <div class="audio-library-item-actions">
                     <button type="button" class="neon-btn" data-edit-audio-item="${escapeHtml(item.id)}">✂️ Editar audio</button>
+                    <button type="button" class="neon-btn" data-assign-audio-item="${escapeHtml(item.id)}">Designar a</button>
                     <button type="button" class="neon-btn audio-used-btn" data-mark-used-audio="${escapeHtml(item.id)}" aria-label="Marcar como usado y borrar ${escapeHtml(item.name || 'audio')}" title="Marcar audio como usado">✅ Usado</button>
                   </div>
                 </li>
@@ -7555,12 +7568,104 @@
           openAudioTrimEditorModal(category, audioId);
         });
       });
+      targetView.querySelectorAll('[data-assign-audio-item]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const audioId = String(btn.dataset.assignAudioItem || '');
+          if (!audioId) return;
+          openAssignAudioModal(category, audioId);
+        });
+      });
       targetView.querySelectorAll('[data-mark-used-audio]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const audioId = String(btn.dataset.markUsedAudio || '');
           if (!audioId) return;
           openMarkAudioLibraryAsUsedModal(category, audioId);
         });
+      });
+    }
+
+    function openAssignAudioModal(category, audioId) {
+      const normalizedCategory = category === 'fondos' ? 'fondos' : 'voces';
+      const items = Array.isArray(state.audioLibrary?.[normalizedCategory]) ? state.audioLibrary[normalizedCategory] : [];
+      const audioItem = items.find((item) => item.id === audioId);
+      if (!audioItem) return;
+
+      const isVoces = normalizedCategory === 'voces';
+      const sourceOptions = isVoces ? collectionModel.characters : collectionModel.universes;
+      const options = (Array.isArray(sourceOptions) ? sourceOptions : [])
+        .filter((item) => item && item.id)
+        .map((item) => ({ id: String(item.id), name: String(item.name || (isVoces ? 'Sin personaje' : 'Sin universo')) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+      const selectedUniverseIds = new Set(Array.isArray(audioItem.universeIds) ? audioItem.universeIds.map(String) : []);
+      const currentCharacterId = String(audioItem.characterId || '');
+      const emptyMessage = isVoces
+        ? 'No hay personajes disponibles para designar esta voz.'
+        : 'No hay universos disponibles para designar este fondo.';
+
+      const modal = document.createElement('section');
+      modal.className = 'detail-modal';
+      modal.innerHTML = `
+        <article class="detail-content assign-audio-modal">
+          <h3 class="section-title">Designar audio</h3>
+          <p class="muted">${escapeHtml(audioItem.name || 'Archivo sin nombre')}</p>
+          <p>${isVoces ? 'Elegí un personaje para asociar esta voz.' : 'Elegí uno o más universos para asociar este fondo.'}</p>
+          ${options.length ? `
+            <div class="assign-audio-modal__list" role="group" aria-label="${isVoces ? 'Personajes' : 'Universos'}">
+              ${options.map((option) => `
+                <label class="assign-audio-modal__option">
+                  <input
+                    type="${isVoces ? 'radio' : 'checkbox'}"
+                    name="assign-audio-target"
+                    value="${escapeHtml(option.id)}"
+                    ${isVoces
+                      ? option.id === currentCharacterId ? 'checked' : ''
+                      : selectedUniverseIds.has(option.id) ? 'checked' : ''}
+                  >
+                  <span>${escapeHtml(option.name)}</span>
+                </label>
+              `).join('')}
+            </div>
+          ` : `<p class="muted">${emptyMessage}</p>`}
+          <div class="actions">
+            <button type="button" class="neon-btn" data-modal-cancel-assign>Cancelar</button>
+            <button type="button" class="neon-btn neon-btn--primary" data-modal-confirm-assign ${options.length ? '' : 'disabled'}>Confirmar</button>
+          </div>
+        </article>
+      `;
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) modal.remove();
+      });
+      document.body.appendChild(modal);
+
+      modal.querySelector('[data-modal-cancel-assign]')?.addEventListener('click', () => modal.remove());
+      modal.querySelector('[data-modal-confirm-assign]')?.addEventListener('click', () => {
+        const targetIndex = items.findIndex((item) => item.id === audioId);
+        if (targetIndex < 0) return;
+
+        if (isVoces) {
+          const selectedCharacterId = String(modal.querySelector('input[name="assign-audio-target"]:checked')?.value || '');
+          if (!selectedCharacterId) {
+            alert('Seleccioná un personaje para designar esta voz.');
+            return;
+          }
+          items[targetIndex] = {
+            ...items[targetIndex],
+            characterId: selectedCharacterId
+          };
+        } else {
+          const universeIds = Array.from(modal.querySelectorAll('input[name="assign-audio-target"]:checked'))
+            .map((input) => String(input.value || ''))
+            .filter(Boolean);
+          items[targetIndex] = {
+            ...items[targetIndex],
+            universeIds: [...new Set(universeIds)]
+          };
+        }
+
+        state.audioLibrary[normalizedCategory] = items;
+        saveAudioLibrary();
+        renderAudioCategoryView(normalizedCategory);
+        modal.remove();
       });
     }
 

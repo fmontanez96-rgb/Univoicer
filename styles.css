@@ -4836,3 +4836,27 @@
     grid-template-columns: 1fr;
   }
 }
+
+.assign-audio-modal__list {
+  display: grid;
+  gap: .55rem;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  margin: 1rem 0;
+  padding: .35rem;
+}
+
+.assign-audio-modal__option {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .65rem .75rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: .75rem;
+  background: rgba(7, 12, 26, 0.42);
+  cursor: pointer;
+}
+
+.assign-audio-modal__option input {
+  flex: 0 0 auto;
+}
