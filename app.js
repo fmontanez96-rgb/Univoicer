@@ -1620,29 +1620,68 @@
     }
 
     async function handleAudioLibraryFileSelected(event, category, preferredName = '') {
-      const file = event.target?.files?.[0];
-      event.target.value = '';
-      if (!file) return;
+      const files = Array.from(event.target?.files || []);
+      if (event.target) event.target.value = '';
+      if (!files.length) return;
 
-      setAudioUploadStatus(category, { loading: true, error: '', success: '' });
-      try {
-        const metadata = await uploadAudioFileForCategory(file, category, preferredName);
+      const total = files.length;
+      const uploadedMetadata = [];
+      const uploadErrors = [];
+      const getUploadSummary = () => {
+        const errorSummary = uploadErrors.length ? ` · ${uploadErrors.length} con error` : '';
+        return `Total: ${total} · Subidos: ${uploadedMetadata.length}${errorSummary}`;
+      };
+      const getUploadErrorStatus = () => (
+        uploadErrors.length ? `${getUploadSummary()} · Errores: ${uploadErrors.join(' | ')}` : ''
+      );
+
+      setAudioUploadStatus(category, {
+        loading: true,
+        error: '',
+        success: `Preparando ${total} archivo${total === 1 ? '' : 's'} para subir...`
+      });
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const fileName = file?.name || `archivo ${index + 1}`;
+        setAudioUploadStatus(category, {
+          loading: true,
+          error: getUploadErrorStatus(),
+          success: `${getUploadSummary()} · Subiendo ${index + 1} de ${total}: "${fileName}"...`
+        });
+
+        try {
+          const displayName = total === 1 ? preferredName : '';
+          const metadata = await uploadAudioFileForCategory(file, category, displayName);
+          uploadedMetadata.push(metadata);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · "${metadata.name}" subido correctamente.`
+          });
+        } catch (err) {
+          uploadErrors.push(`"${fileName}": ${normalizeAudioUploadError(err)}`);
+          setAudioUploadStatus(category, {
+            loading: true,
+            error: getUploadErrorStatus(),
+            success: `${getUploadSummary()} · Continuando con los archivos restantes...`
+          });
+        }
+      }
+
+      if (uploadedMetadata.length) {
         const current = Array.isArray(state.audioLibrary[category]) ? state.audioLibrary[category] : [];
-        state.audioLibrary[category] = [metadata, ...current]
+        state.audioLibrary[category] = [...uploadedMetadata, ...current]
           .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
         saveAudioLibrary();
-        setAudioUploadStatus(category, {
-          loading: false,
-          success: `Archivo "${metadata.name}" subido correctamente.`,
-          error: ''
-        });
-      } catch (err) {
-        setAudioUploadStatus(category, {
-          loading: false,
-          error: normalizeAudioUploadError(err),
-          success: ''
-        });
       }
+
+      const finalSummary = `Total: ${total} · Subidos correctamente: ${uploadedMetadata.length} · Errores: ${uploadErrors.length}`;
+      setAudioUploadStatus(category, {
+        loading: false,
+        error: uploadErrors.length ? `${finalSummary} · ${uploadErrors.join(' | ')}` : '',
+        success: uploadErrors.length ? '' : finalSummary
+      });
     }
 
     function hydrateModelWithFallback() {
@@ -7443,7 +7482,7 @@
                   <div class="audio-library-header">
                     <h3>${label}</h3>
                     <button type="button" class="neon-btn" data-audio-trigger="${key}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'SUBIENDO...' : buttonLabel}</button>
-                    <input type="file" accept="audio/*" data-audio-input="${key}" class="audio-library-input" hidden>
+                    <input type="file" accept="audio/*" multiple data-audio-input="${key}" class="audio-library-input" hidden>
                   </div>
                   <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
                   ${renderAudioItems(key)}
@@ -7512,7 +7551,7 @@
           <div class="audio-upload-inline">
             <input type="text" class="control-input" data-audio-name-input="${category}" placeholder="Nombre para mostrar (opcional)">
             <button class="neon-btn toon-btn" data-audio-add-btn="${category}" ${status.loading ? 'disabled' : ''}>${status.loading ? 'Subiendo...' : addLabel}</button>
-            <input type="file" accept="audio/*" data-audio-file-input="${category}" hidden>
+            <input type="file" accept="audio/*" multiple data-audio-file-input="${category}" hidden>
           </div>
           <p class="audio-library-feedback ${status.error ? 'is-error' : status.success ? 'is-success' : ''}" aria-live="polite">${escapeHtml(status.error || status.success || '')}</p>
           <button class="neon-btn toon-btn" data-back-audio-gallery>← Volver a Galería de audios</button>
