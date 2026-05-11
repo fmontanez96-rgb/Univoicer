@@ -395,7 +395,8 @@
         universes: [],
         videos: [],
         worldMemberships: [],
-        audioLibrary: createEmptyAudioLibrary()
+        audioLibrary: createEmptyAudioLibrary(),
+        characterMedia: {}
       };
     }
 
@@ -681,7 +682,8 @@
             }))
             .filter((item) => item.worldUniverseId && item.parentUniverseId)
           : [],
-        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary)
+        audioLibrary: normalizeAudioLibrary(baseModel.audioLibrary),
+        characterMedia: normalizeCharacterMediaMap(baseModel.characterMedia)
       };
 
       const actorMap = new Map(model.actors.map((actor) => [normalizeEntityName(actor.name), actor]));
@@ -1601,6 +1603,32 @@
         fondos: normalizeList(rawAudioLibrary.fondos || rawAudioLibrary.backgrounds, normalizeBackground),
         mezclas: normalizeList(rawAudioLibrary.mezclas || rawAudioLibrary.mixes || rawAudioLibrary.mix, normalizeMix)
       };
+    }
+
+    function normalizeCharacterMediaEntry(rawEntry) {
+      const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+      return {
+        imageUrls: Array.isArray(entry.imageUrls)
+          ? [...new Set(entry.imageUrls.map((url) => String(url || '').trim()).filter(Boolean))]
+          : [],
+        backgroundId: String(entry.backgroundId || ''),
+        mixUrl: String(entry.mixUrl || '')
+      };
+    }
+
+    function normalizeCharacterMediaMap(rawMap) {
+      if (!rawMap || typeof rawMap !== 'object') return {};
+      return Object.fromEntries(
+        Object.entries(rawMap)
+          .map(([characterId, entry]) => [String(characterId || '').trim(), normalizeCharacterMediaEntry(entry)])
+          .filter(([characterId]) => Boolean(characterId))
+      );
+    }
+
+    function ensureCollectionModelCharacterMedia(model = collectionModel) {
+      if (!model || typeof model !== 'object') return {};
+      model.characterMedia = normalizeCharacterMediaMap(model.characterMedia);
+      return model.characterMedia;
     }
 
     function loadAudioLibraryFromStorage() {
@@ -2606,6 +2634,7 @@
         if (!collectionModel.videos.length && VIDEOS.length) {
           collectionModel = migrateLegacyVideosToModel(VIDEOS);
           ensureCollectionModelAudioLibrary(collectionModel);
+          ensureCollectionModelCharacterMedia(collectionModel);
           localStorage.setItem(COLLECTION_MODEL_STORAGE_KEY, JSON.stringify(collectionModel));
         }
         buildAutoMarathonPlaylist();
@@ -5046,6 +5075,67 @@
       feedback.style.color = type === 'error' ? '#ffb6b6' : '#9ff7c8';
     }
 
+    function getCharacterModelRecordByProfileId(characterId) {
+      const profileId = String(characterId || '').trim();
+      if (!profileId) return null;
+      return (collectionModel.characters || []).find((character) => (
+        String(character.id || '') === profileId || getCharacterIdByName(character.name) === profileId
+      )) || null;
+    }
+
+    function getCharacterMedia(characterId) {
+      const profileId = String(characterId || '').trim();
+      const modelCharacter = getCharacterModelRecordByProfileId(profileId);
+      const modelId = String(modelCharacter?.id || '').trim();
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const media = normalizeCharacterMediaEntry(mediaMap[profileId] || mediaMap[modelId]);
+      mediaMap[profileId] = media;
+      if (modelId && modelId !== profileId) delete mediaMap[modelId];
+      return media;
+    }
+
+    function saveCharacterMedia(characterId, patch = {}) {
+      const mediaMap = ensureCollectionModelCharacterMedia(collectionModel);
+      const current = getCharacterMedia(characterId);
+      mediaMap[String(characterId || '').trim()] = normalizeCharacterMediaEntry({ ...current, ...patch });
+      saveCollectionModel();
+    }
+
+    function audioItemMatchesCharacter(audioItem, characterId) {
+      const itemCharacterId = String(audioItem?.characterId || '').trim();
+      if (!itemCharacterId) return false;
+      if (itemCharacterId === characterId) return true;
+      const modelCharacter = getCharacterModelRecordByProfileId(characterId);
+      if (modelCharacter?.id && itemCharacterId === modelCharacter.id) return true;
+      const characterName = getCharacterNameById(characterId);
+      return Boolean(characterName && getCharacterIdByName(characterName) === itemCharacterId);
+    }
+
+    function getUrlExtension(url, fallback = 'bin') {
+      try {
+        const pathname = new URL(url, window.location.href).pathname;
+        const match = pathname.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
+      } catch (_) {
+        const clean = String(url || '').split('?')[0];
+        const match = clean.match(/\.([a-zA-Z0-9]{2,8})$/);
+        return match ? match[1].toLowerCase() : fallback;
+      }
+    }
+
+    function triggerFileDownload(url, filename) {
+      const cleanUrl = String(url || '').trim();
+      if (!cleanUrl) return;
+      const anchor = document.createElement('a');
+      anchor.href = cleanUrl;
+      anchor.download = filename || '';
+      anchor.target = '_blank';
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+
     function getCharacterProfileData(characterId) {
       const characterName = getCharacterNameById(characterId);
       const characterEntries = VIDEOS.filter(v => getCharacterIdByName(v.personaje || '') === characterId);
@@ -5073,6 +5163,16 @@
         document.getElementById('backFromCharacterMissing')?.addEventListener('click', () => changeView('map'));
         return;
       }
+      const characterMedia = getCharacterMedia(characterId);
+      const characterVoices = (Array.isArray(state.audioLibrary?.voces) ? state.audioLibrary.voces : [])
+        .filter((voice) => audioItemMatchesCharacter(voice, characterId));
+      const availableBackgrounds = Array.isArray(state.audioLibrary?.fondos) ? state.audioLibrary.fondos : [];
+      const selectedBackgroundId = availableBackgrounds.some((background) => background.id === characterMedia.backgroundId)
+        ? characterMedia.backgroundId
+        : '';
+      if (selectedBackgroundId !== characterMedia.backgroundId) characterMedia.backgroundId = selectedBackgroundId;
+      const selectedBackground = availableBackgrounds.find((background) => background.id === selectedBackgroundId) || null;
+
       viewCharacterProfile.innerHTML = `
         <section class="hud-panel holo-card profile-layout">
           <div class="actions">
@@ -5095,6 +5195,44 @@
             <div class="actions"><button id="addUniverseToCharacter" class="neon-btn">Agregar universo</button></div>
           </article>
           <article class="profile-section">
+            <h4>Edición</h4>
+            <div class="profile-edit-block">
+              <h5>Voces del personaje (${characterVoices.length})</h5>
+              <ul class="detail-list detail-list-soft">
+                ${characterVoices.map((voice) => `
+                  <li>
+                    ${escapeHtml(voice.name || 'Voz sin nombre')}
+                    ${voice.url ? ` · <a href="${escapeHtml(voice.url)}" target="_blank" rel="noopener">abrir</a>` : ''}
+                  </li>
+                `).join('') || '<li>Sin voces asignadas a este personaje.</li>'}
+              </ul>
+            </div>
+            <form id="characterImageUrlForm" class="profile-edit-block audio-upload-inline" style="align-items: flex-end;">
+              <label style="flex: 1;">URL de imagen
+                <input id="characterImageUrlInput" type="url" class="control-input" placeholder="https://..." autocomplete="off">
+              </label>
+              <button type="submit" class="neon-btn">Guardar imagen</button>
+            </form>
+            <ul class="detail-list detail-list-soft">
+              ${characterMedia.imageUrls.map((url, index) => `
+                <li>
+                  <a href="${escapeHtml(url)}" target="_blank" rel="noopener">Imagen ${index + 1}</a>
+                  <button type="button" class="neon-btn" data-delete-character-image="${index}">Eliminar</button>
+                </li>
+              `).join('') || '<li>Sin imágenes guardadas.</li>'}
+            </ul>
+            <label class="profile-edit-block">Fondo disponible
+              <select id="characterBackgroundSelect" class="control-input">
+                <option value="">Sin fondo asignado</option>
+                ${availableBackgrounds.map((background) => `
+                  <option value="${escapeHtml(background.id)}" ${background.id === selectedBackgroundId ? 'selected' : ''}>${escapeHtml(background.name || 'Fondo sin nombre')}</option>
+                `).join('')}
+              </select>
+            </label>
+            <p class="section-note">Fondo asignado: ${selectedBackground ? escapeHtml(selectedBackground.name || 'Fondo sin nombre') : 'ninguno'}.</p>
+            <div class="actions"><button id="downloadCharacterMedia" type="button" class="neon-btn neon-btn--primary">Descargar multimedia</button></div>
+          </article>
+          <article class="profile-section">
             <h4>Videos asociados (${videos.length})</h4>
             <ul class="detail-list detail-list-soft">
               ${videos.map(item => `<li>${item.titulo || 'Sin título'} · ${item.actor_de_doblaje || 'Sin actor'} · ${(getVideoUniverses(item).join(', ') || 'Sin universo')}</li>`).join('') || '<li>Sin videos asociados.</li>'}
@@ -5103,6 +5241,67 @@
         </section>
       `;
       document.getElementById('backFromCharacterProfile')?.addEventListener('click', () => changeView(state.universe ? 'universe' : 'map'));
+      document.getElementById('characterImageUrlForm')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = document.getElementById('characterImageUrlInput');
+        const imageUrl = String(input?.value || '').trim();
+        if (!imageUrl) return setCharacterProfileFeedback('Debes ingresar una URL de imagen.', 'error');
+        try {
+          new URL(imageUrl, window.location.href);
+        } catch (_) {
+          return setCharacterProfileFeedback('La URL de imagen no es válida.', 'error');
+        }
+        const nextImageUrls = [...new Set([...characterMedia.imageUrls, imageUrl])];
+        saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback('Imagen guardada correctamente.');
+      });
+      viewCharacterProfile.querySelectorAll('[data-delete-character-image]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number(btn.dataset.deleteCharacterImage);
+          if (!Number.isInteger(index) || index < 0) return;
+          const nextImageUrls = characterMedia.imageUrls.filter((_, currentIndex) => currentIndex !== index);
+          saveCharacterMedia(characterId, { imageUrls: nextImageUrls });
+          renderCharacterProfile(characterId);
+          setCharacterProfileFeedback('Imagen eliminada correctamente.');
+        });
+      });
+      document.getElementById('characterBackgroundSelect')?.addEventListener('change', (event) => {
+        const backgroundId = String(event.target?.value || '').trim();
+        saveCharacterMedia(characterId, { backgroundId });
+        renderCharacterProfile(characterId);
+        setCharacterProfileFeedback(backgroundId ? 'Fondo asignado correctamente.' : 'Fondo desasignado correctamente.');
+      });
+      document.getElementById('downloadCharacterMedia')?.addEventListener('click', () => {
+        const safeCharacterName = cssSafe(characterName || 'personaje') || 'personaje';
+        let downloadCount = 0;
+        characterMedia.imageUrls.forEach((url, index) => {
+          const extension = getUrlExtension(url, 'jpg');
+          triggerFileDownload(url, `${safeCharacterName}-imagen-${index + 1}.${extension}`);
+          downloadCount += 1;
+        });
+        characterVoices.forEach((voice, index) => {
+          if (!voice.url) return;
+          const extension = getUrlExtension(voice.url, 'mp3');
+          const voiceName = cssSafe(voice.name || `voz-${index + 1}`) || `voz-${index + 1}`;
+          triggerFileDownload(voice.url, `${safeCharacterName}-${voiceName}.${extension}`);
+          downloadCount += 1;
+        });
+        if (selectedBackground?.url) {
+          const extension = getUrlExtension(selectedBackground.url, 'mp3');
+          const backgroundName = cssSafe(selectedBackground.name || 'fondo') || 'fondo';
+          triggerFileDownload(selectedBackground.url, `${safeCharacterName}-${backgroundName}.${extension}`);
+          downloadCount += 1;
+        }
+        if (characterMedia.mixUrl) {
+          const extension = getUrlExtension(characterMedia.mixUrl, 'wav');
+          triggerFileDownload(characterMedia.mixUrl, `${safeCharacterName}-mezcla.${extension}`);
+          downloadCount += 1;
+        }
+        setCharacterProfileFeedback(downloadCount
+          ? `Descarga iniciada para ${downloadCount} archivo(s).`
+          : 'No hay multimedia asignada para descargar.', downloadCount ? 'success' : 'error');
+      });
       document.getElementById('addActorToCharacter')?.addEventListener('click', () => {
         const inputName = prompt(`Nombre del actor para ${characterName}:`, '');
         if (inputName === null) return;
